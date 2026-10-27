@@ -1,0 +1,20 @@
+# .NET
+bin/
+obj/
+.vs/
+*.user
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Data and secrets
+*.sqlite
+*.sqlite-journal
+.env
+
+# Sample photos and videos used for local checks
+/examples/

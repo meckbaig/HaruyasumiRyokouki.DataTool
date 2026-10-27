@@ -1,0 +1,1 @@
+"""Local photo analysis pipeline."""

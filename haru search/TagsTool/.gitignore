@@ -1,0 +1,6 @@
+bin/
+obj/
+tags.csv
+tags.json
+media-map.json
+*.sqlite

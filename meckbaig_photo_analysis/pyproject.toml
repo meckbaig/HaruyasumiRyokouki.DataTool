@@ -1,0 +1,35 @@
+[project]
+name = "photolib"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=10.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Heavy model backends: needed only for real OCR/VLM/embedding runs, never for unit tests.
+# All code that uses them imports them lazily inside functions, so the unit suite
+# runs on the core deps plus pytest alone.
+models = [
+    "ollama>=0.3",
+    "transformers>=4.45,<6",
+    "torch>=2.4",
+    "sentencepiece>=0.2",
+]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires an external backend (Ollama, Vision, or torch model)",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Only photolib is a Python package. ocr_helper (a Swift helper invoked by file
+# path) and tests are intentionally excluded, so disable flat-layout autodiscovery.
+[tool.setuptools]
+packages = ["photolib"]

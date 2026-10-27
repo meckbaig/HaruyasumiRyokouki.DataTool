@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.sqlite
+*.sqlite-journal
+ocr_helper/vision_ocr
+.DS_Store
+.pytest_cache/
+*.egg-info/
+build/
+dist/
