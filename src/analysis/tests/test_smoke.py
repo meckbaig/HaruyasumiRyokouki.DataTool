@@ -1,3 +1,3 @@
 def test_package_imports():
-    import photolib
-    assert photolib.__name__ == "photolib"
+    import haru_analysis
+    assert haru_analysis.__name__ == "haru_analysis"

@@ -1,35 +1,34 @@
 [project]
-name = "photolib"
+name = "haru-analysis"
 version = "0.1.0"
+description = "Local analysis of trip photos and videos: file index, video frames, image embeddings"
 requires-python = ">=3.11"
 dependencies = [
     "pillow>=10.0",
+    "pillow-heif>=0.18",
     "numpy>=1.26",
-]
-
-[project.optional-dependencies]
-# Heavy model backends: needed only for real OCR/VLM/embedding runs, never for unit tests.
-# All code that uses them imports them lazily inside functions, so the unit suite
-# runs on the core deps plus pytest alone.
-models = [
-    "ollama>=0.3",
+    # Model backends for embed. Imported lazily, so unit tests never load them.
     "transformers>=4.45,<6",
     "torch>=2.4",
     "sentencepiece>=0.2",
 ]
+
+[project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[project.scripts]
+haru-analysis = "haru_analysis.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"
 markers = [
-    "integration: requires an external backend (Ollama, Vision, or torch model)",
+    "integration: requires real models or data outside the repository; run with -m integration",
 ]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-# Only photolib is a Python package. ocr_helper (a Swift helper invoked by file
-# path) and tests are intentionally excluded, so disable flat-layout autodiscovery.
 [tool.setuptools]
-packages = ["photolib"]
+packages = ["haru_analysis"]
