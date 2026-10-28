@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using HaruyasumiRyokouki.DataTool.Common;
 using Microsoft.Data.Sqlite;
 
@@ -146,6 +147,70 @@ internal static class VocabDb
 		return command.ExecuteScalar() as string;
 	}
 
+	/// <summary>
+	/// Stops a step that writes tags to the site unless vocabulary.yaml is approved as it is now.
+	/// </summary>
+	/// <exception cref="WorkspaceException">No approval, or the file changed after it.</exception>
+	public static void RequireApproved(SqliteConnection connection, string vocabularyPath)
+	{
+		Ensure(connection);
+		string? approved = ApprovedSha256(connection);
+		if (approved is null)
+			throw new WorkspaceException("The vocabulary is not approved. Run haru-tags review, then haru-tags review --approve.");
+
+		string current = File.Exists(vocabularyPath)
+			? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(vocabularyPath))).ToLowerInvariant()
+			: "";
+		if (current != approved)
+			throw new WorkspaceException($"{vocabularyPath} changed after the approval. Run haru-tags review --approve again.");
+	}
+
+	/// <summary>The approved tags with their labels, aliases and the files that get them.</summary>
+	public static List<ApprovedTag> ReadApproved(SqliteConnection connection)
+	{
+		var tags = new Dictionary<string, ApprovedTag>(StringComparer.Ordinal);
+		using (var command = connection.CreateCommand())
+		{
+			command.CommandText = """
+				SELECT tag, slug, label_en, label_ru, label_ja, existing_id FROM vocab_tags
+				WHERE action = 'keep' ORDER BY slug
+				""";
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+			{
+				string name = reader.GetString(0);
+				tags[name] = new ApprovedTag(reader.GetString(1),
+					new Dictionary<string, string> { ["en"] = reader.GetString(2), ["ru"] = reader.GetString(3), ["ja"] = reader.GetString(4) },
+					[], reader.IsDBNull(5) ? null : (int)reader.GetInt64(5), new HashSet<string>(StringComparer.Ordinal));
+			}
+		}
+
+		using (var command = connection.CreateCommand())
+		{
+			command.CommandText = "SELECT tag, language, text FROM vocab_aliases ORDER BY tag, language, text";
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+				if (tags.TryGetValue(reader.GetString(0), out var tag))
+					tag.Aliases.Add(new TagText(reader.GetString(1), reader.GetString(2)));
+		}
+
+		// Files of a tag: every file with one of its sources that is still in the source folder.
+		using (var command = connection.CreateCommand())
+		{
+			command.CommandText = """
+				SELECT s.tag, r.key FROM vocab_sources s
+				JOIN raw_tags r ON r.tag = s.raw_tag
+				JOIN media m ON m.key = r.key AND m.missing = 0
+				""";
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+				if (tags.TryGetValue(reader.GetString(0), out var tag))
+					tag.Keys.Add(reader.GetString(1));
+		}
+
+		return tags.Values.ToList();
+	}
+
 	private static void Execute(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
 	{
 		using var command = connection.CreateCommand();
@@ -155,6 +220,12 @@ internal static class VocabDb
 		command.ExecuteNonQuery();
 	}
 }
+
+/// <summary>A tag of the approved vocabulary, as the steps that write to the site see it.</summary>
+/// <param name="Labels">Main label per language: en, ru, ja.</param>
+/// <param name="ExistingId">Id of the tag on the site, when the vocab step matched one.</param>
+/// <param name="Keys">Files that get the tag.</param>
+internal sealed record ApprovedTag(string Slug, Dictionary<string, string> Labels, List<TagText> Aliases, int? ExistingId, HashSet<string> Keys);
 
 /// <summary>A tag of the vocabulary: the entries merged into it and the keep-or-drop decision.</summary>
 internal sealed class VocabTag(string name)

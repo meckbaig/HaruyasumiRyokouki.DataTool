@@ -1,11 +1,16 @@
 # haru-tags
 
-The part of the data tool that talks to the site: it turns the machine tags of `haru-analysis` into a reviewed vocabulary and imports it. It used to be `TagsTool`, a one-off migration tool; the CSV round trip through Excel, the translation through the backend's `/v1/tags/completion` and the hand-made `media-map.json` are gone.
+The part of the data tool that talks to the site: it turns the machine tags of `haru-analysis` into a reviewed vocabulary, uploads the files and imports the tags and image vectors. It used to be `TagsTool`, a one-off migration tool; the CSV round trip through Excel and the hand-made `media-map.json` are gone.
 
 ```
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- status --workspace my-trip
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- vocab  --workspace my-trip
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- review --workspace my-trip [--check | --approve]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-tags --workspace my-trip [--yes]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- upload --workspace my-trip [--yes]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- sync --workspace my-trip [--yes]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- assign --workspace my-trip [--yes]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-embeddings --workspace my-trip [--yes] [--dry-run]
 ```
 
 Normally `haru-data run` starts the steps. A typo in an option is an error, not a silently ignored flag.
@@ -17,12 +22,20 @@ The workspace's `haru-data.toml` names the backend; credentials only come from t
 ```toml
 [backend]
 api = "https://haru.example"   # or HARU_API; there is no default, so nothing is written to a server nobody chose
+
+[storage]                      # where the site imports media from: the backend's MediaStorage
+type = "webdav"                # webdav | local
+url = "https://cloud.example/remote.php/dav/files/user/media/"   # webdav: or HARU_STORAGE_URL
+# path = "D:/Media"            # local: the backend's LocalStorageProvider:Path
+concurrency = 4                # parallel uploads
 ```
 
 ```
 HARU_USER=admin                # Basic auth of the site's admin
 HARU_PASSWORD=...
-HARU_CONNECTION=Host=...;Database=...;Username=...;Password=...   # only for writing media_embeddings
+HARU_STORAGE_USER=...          # WebDAV storage
+HARU_STORAGE_PASSWORD=...
+HARU_CONNECTION=Host=...;Database=...;Username=...;Password=...   # reading media_files, writing media_embeddings
 ```
 
 ## Building the vocabulary
@@ -68,6 +81,16 @@ Every answer is cached in `cache/llm/` by a hash of the request, so a run stoppe
 - `review --approve` checks the file and, without errors, makes it the vocabulary in `work.sqlite`. The hash of the approved file is stored; editing the file afterwards takes the approval back, and running `vocab` again does too.
 
 A deleted tag is simply not created, and its sources put no tag on the photos; the summary shows how many machine tags end up unused.
+
+## Writing to the site
+
+Each of these steps prints where it is going to write (API host, storage, database host and name, never credentials) and asks before writing; `--yes` skips the question but still prints the target. A declined question ends the step with exit code `2`. Every step can be run again: it does only what is not done yet.
+
+1. `push-tags` needs the approved vocabulary, unchanged since the approval. It creates the tags the site does not have and stores the id of every tag; a tag the site already has, matched by `vocab` or by slug, is not created again. A tag the site refuses is an error with the site's answer, the other tags are still created, and the step ends with exit code `1` so the next steps do not run.
+2. `upload` copies the files of the source folder into the storage. A file whose key the storage already has with any extension is skipped: after a sync the site keeps a photo as `.webp` and deletes the original. The modification time goes along (on WebDAV through the `X-OC-MTime` header of Nextcloud and ownCloud), because the site dates a file without a date in its name by that time. A failed file is tried three times.
+3. `sync` calls `PUT /v1/media/sync` and waits until the site has imported the new files, which can take a long time for videos; while another sync runs, it waits and asks again. Then it reads `media_files` and stores the site id of every local file by key. A file the site did not import is a warning with the likely reason (not uploaded, or skipped by the site: no date, failed conversion); two site files with one key are an error.
+4. `assign` adds every approved tag to the site files with one of its sources, 500 files per request. It reports how many links were added and how many were already there.
+5. `push-embeddings` checks the vectors (one model, length 768, unit norm), matches them to `media_files` by key, photos and videos alike, and replaces the rows of those files in `media_embeddings` in one transaction with a binary `COPY`. It reports the site files left without a vector: they never show up among similar files. `--dry-run` stops before writing. The site loads its similarity index at start, so restart the backend afterwards.
 
 ## How it works with the backend
 

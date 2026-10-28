@@ -35,6 +35,34 @@ internal static class AnalysisData
 		return result;
 	}
 
+	/// <summary>Files that are still in the source folder.</summary>
+	public static List<MediaItem> ReadMedia(SqliteConnection connection)
+	{
+		var result = new List<MediaItem>();
+		using var command = connection.CreateCommand();
+		command.CommandText = "SELECT key, path, type FROM media WHERE missing = 0 ORDER BY key";
+
+		using var reader = command.ExecuteReader();
+		while (reader.Read())
+			result.Add(new MediaItem(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+
+		return result;
+	}
+
+	/// <summary>Models the vectors were made with; more than one means they cannot be compared.</summary>
+	public static List<string> ReadVectorModels(SqliteConnection connection)
+	{
+		var result = new List<string>();
+		using var command = connection.CreateCommand();
+		command.CommandText = "SELECT DISTINCT model FROM embeddings ORDER BY model";
+
+		using var reader = command.ExecuteReader();
+		while (reader.Read())
+			result.Add(reader.GetString(0));
+
+		return result;
+	}
+
 	/// <summary>Image vectors by file key.</summary>
 	/// <exception cref="InvalidDataException">A blob does not match its stated dimension.</exception>
 	public static Dictionary<string, float[]> ReadVectors(SqliteConnection connection)
@@ -82,6 +110,12 @@ internal static class AnalysisData
 		return result;
 	}
 }
+
+/// <summary>A file of the source folder.</summary>
+/// <param name="Key">File name without the last extension, lower case.</param>
+/// <param name="Path">Full path of the file.</param>
+/// <param name="Type"><c>image</c> or <c>video</c>.</param>
+internal sealed record MediaItem(string Key, string Path, string Type);
 
 /// <summary>One row of raw_tags.</summary>
 /// <param name="Key">File key.</param>

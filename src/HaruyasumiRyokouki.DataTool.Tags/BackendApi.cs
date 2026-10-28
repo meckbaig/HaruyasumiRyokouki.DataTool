@@ -29,8 +29,8 @@ internal sealed class BackendApi : IDisposable
 		_http = new HttpClient(handler ?? new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) })
 		{
 			BaseAddress = new Uri(baseAddress.ToString().TrimEnd('/') + "/"),
-			// A completion is a call to the backend's AI model and may take a while.
-			Timeout = TimeSpan.FromMinutes(2)
+			// Every request sets its own limit (Limit): a sync may take hours.
+			Timeout = System.Threading.Timeout.InfiniteTimeSpan
 		};
 
 		string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{password}"));
@@ -59,7 +59,8 @@ internal sealed class BackendApi : IDisposable
 		HttpResponseMessage response;
 		try
 		{
-			response = await _http.GetAsync("v1/tags", cancellationToken);
+			using var limit = Limit(cancellationToken);
+			response = await _http.GetAsync("v1/tags", limit.Token);
 		}
 		catch (HttpRequestException ex)
 		{
@@ -76,7 +77,8 @@ internal sealed class BackendApi : IDisposable
 	/// <summary>GET /v1/tags: the site's current vocabulary.</summary>
 	public async Task<List<ExistingTag>> GetTagsAsync(CancellationToken cancellationToken = default)
 	{
-		var response = await _http.GetAsync("v1/tags", cancellationToken);
+		using var limit = Limit(cancellationToken);
+		var response = await _http.GetAsync("v1/tags", limit.Token);
 		await ThrowIfFailedAsync(response, "reading tags");
 
 		var payload = await response.Content.ReadFromJsonAsync<GetTagsEnvelope>(Json, cancellationToken);
@@ -92,7 +94,9 @@ internal sealed class BackendApi : IDisposable
 	{
 		for (int attempt = 1; ; attempt++)
 		{
-			var response = await _http.PostAsJsonAsync("v1/tags/completion", new { tag }, Json, cancellationToken);
+			// A completion is a call to the backend's AI model and may take a while.
+			using var limit = Limit(cancellationToken);
+			var response = await _http.PostAsJsonAsync("v1/tags/completion", new { tag }, Json, limit.Token);
 			bool retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
 			if (retryable && attempt < RetryAttempts)
 			{
@@ -118,7 +122,8 @@ internal sealed class BackendApi : IDisposable
 		CancellationToken cancellationToken = default)
 	{
 		var body = new { tag = new { slug, translations = translations.ToList(), aliases = aliases.ToList() } };
-		var response = await _http.PostAsJsonAsync("v1/tags", body, Json, cancellationToken);
+		using var limit = Limit(cancellationToken);
+		var response = await _http.PostAsJsonAsync("v1/tags", body, Json, limit.Token);
 		await ThrowIfFailedAsync(response, $"creating tag '{slug}'");
 
 		var payload = await response.Content.ReadFromJsonAsync<AddTagEnvelope>(Json, cancellationToken)
@@ -134,11 +139,54 @@ internal sealed class BackendApi : IDisposable
 	public async Task<int> AddTagToMediaAsync(int tagId, IReadOnlyCollection<int> mediaFileIds,
 		CancellationToken cancellationToken = default)
 	{
-		var response = await _http.PostAsJsonAsync($"v1/tags/{tagId}/media", new { mediaFileIds }, Json, cancellationToken);
+		using var limit = Limit(cancellationToken);
+		var response = await _http.PostAsJsonAsync($"v1/tags/{tagId}/media", new { mediaFileIds }, Json, limit.Token);
 		await ThrowIfFailedAsync(response, $"adding tag {tagId} to {mediaFileIds.Count} files");
 
 		var payload = await response.Content.ReadFromJsonAsync<AddTagToMediaEnvelope>(Json, cancellationToken);
 		return payload?.Affected ?? 0;
+	}
+
+	/// <summary>
+	/// PUT /v1/media/sync: the backend imports the new files of its storage, converting photos and
+	/// making video previews, and answers when it is done, which takes minutes to hours. While
+	/// another sync runs it answers 409; then this waits and asks again.
+	/// </summary>
+	public async Task SyncMediaAsync(TextWriter output, CancellationToken cancellationToken = default)
+	{
+		for (int attempt = 1; ; attempt++)
+		{
+			using var limit = Limit(cancellationToken, SyncTimeout);
+			var response = await _http.PutAsync("v1/media/sync", null, limit.Token);
+			if (response.StatusCode == HttpStatusCode.Conflict && attempt < SyncAttempts)
+			{
+				output.WriteLine($"another sync is running, asking again in {SyncRetryDelay.TotalSeconds:0} s");
+				await Task.Delay(SyncRetryDelay, cancellationToken);
+				continue;
+			}
+
+			await ThrowIfFailedAsync(response, "syncing media");
+			return;
+		}
+	}
+
+	/// <summary>Limit of one sync request.</summary>
+	public TimeSpan SyncTimeout { get; init; } = TimeSpan.FromHours(6);
+
+	/// <summary>How often to ask while another sync runs.</summary>
+	public int SyncAttempts { get; init; } = 60;
+
+	public TimeSpan SyncRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
+
+	/// <summary>Limit of an ordinary request.</summary>
+	public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromMinutes(2);
+
+	/// <summary>The caller's token, cancelled also after the time limit of the request.</summary>
+	private CancellationTokenSource Limit(CancellationToken cancellationToken, TimeSpan? timeout = null)
+	{
+		var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		source.CancelAfter(timeout ?? RequestTimeout);
+		return source;
 	}
 
 	private static async Task ThrowIfFailedAsync(HttpResponseMessage response, string what)

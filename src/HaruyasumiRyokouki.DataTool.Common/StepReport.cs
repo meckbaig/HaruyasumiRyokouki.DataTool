@@ -42,6 +42,9 @@ public sealed class StepReport(string step)
 	/// <summary>Errors recorded so far; any error makes the status <c>error</c>.</summary>
 	public List<StepError> Errors { get; } = [];
 
+	/// <summary>Things the person should look at that do not stop the next steps.</summary>
+	public List<StepError> Warnings { get; } = [];
+
 	/// <summary>One line for the person reading the report.</summary>
 	public string Message { get; set; } = "";
 
@@ -50,6 +53,9 @@ public sealed class StepReport(string step)
 
 	/// <summary>Records an error, optionally about one item (file key, tag slug).</summary>
 	public void Error(string message, string? key = null) => Errors.Add(new StepError(key, message));
+
+	/// <summary>Records a warning, optionally about one item.</summary>
+	public void Warn(string message, string? key = null) => Warnings.Add(new StepError(key, message));
 
 	/// <summary>Writes the report and returns the exit code for its status.</summary>
 	/// <param name="status"><c>ok</c>, <c>error</c> or <c>needs_review</c>; by default <c>error</c> if any error was recorded.</param>
@@ -64,6 +70,7 @@ public sealed class StepReport(string step)
 			finishedAt = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:sszzz"),
 			counts = Counts,
 			errors = Errors,
+			warnings = Warnings.Count > 0 ? Warnings : null,
 			message = Message
 		};
 
@@ -79,7 +86,7 @@ public sealed class StepReport(string step)
 	}
 }
 
-/// <summary>An error in a step report.</summary>
+/// <summary>An error or a warning in a step report.</summary>
 /// <param name="Key">The item it is about, or null for the whole step.</param>
 /// <param name="Message">What went wrong.</param>
 public sealed record StepError(string? Key, string Message);

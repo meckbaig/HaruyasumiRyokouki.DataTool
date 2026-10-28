@@ -26,11 +26,12 @@ Every step writes `reports/<step>.json` and exits with the matching code:
   "finishedAt": "2026-10-28T10:05:12+00:00",
   "counts": { "done": 120, "skipped": 4080 },   // step-specific
   "errors": [ { "key": "img_1", "message": "cannot identify image file" } ],
+  "warnings": [ { "key": "img_2", "message": "not in the storage; run upload" } ],   // only when there are any
   "message": "model google/siglip2-base-patch16-256 on cpu"
 }
 ```
 
-`status` is `error` when at least one error was recorded, even if most files succeeded: the orchestrator stops, and running the step again retries only the failed files.
+Warnings are what a person should look at without stopping the next steps, such as files the site did not import. `status` is `error` when at least one error was recorded, even if most files succeeded: the orchestrator stops, and running the step again retries only the failed files.
 
 ## work.sqlite
 
@@ -123,3 +124,24 @@ Written by `haru-tags vocab`, which replaces their content on every run (the mod
 |---|---|
 | `file_sha256` | SHA-256 of the approved `vocabulary.yaml` |
 | `approved_at` | time of the approval, UTC |
+
+### Owner: site (version 1)
+
+Written by the haru-tags steps that write to the site: what the site calls the tags and files of this workspace.
+
+**site_tags** — site ids of the approved tags, written by `push-tags`.
+
+| column | |
+|---|---|
+| `slug` | primary key: `vocab_tags.slug` |
+| `tag_id` | id of the tag on the site |
+| `created` | 1 when `push-tags` created it, 0 when the site already had it |
+
+**site_media** — site ids of the files, replaced by every `sync`; `assign` reads them.
+
+| column | |
+|---|---|
+| `key` | primary key: `media.key` |
+| `media_file_id` | `media_files.id` of the site |
+| `file_name` | the name on the site, often with another extension (`.webp`) |
+| `type` | `Image` or `Video`, as the site stores it |
