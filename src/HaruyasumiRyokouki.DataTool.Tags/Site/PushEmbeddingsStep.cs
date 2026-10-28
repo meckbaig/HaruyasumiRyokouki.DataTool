@@ -8,10 +8,11 @@ namespace HaruyasumiRyokouki.DataTool.Tags.Site;
 /// <summary>
 /// Step push-embeddings: writes the SigLIP vectors of photos and videos into media_embeddings,
 /// the only table this app writes directly (it has no API and can be rebuilt from work.sqlite at
-/// any time). One transaction: only the rows being written are replaced, the others stay. The
-/// site loads its similarity index at start, so it sees the new vectors after a restart.
+/// any time). Files that have a vector on the site already keep it, unless <c>replace</c> is set:
+/// the site's vectors of earlier trips stay as they were computed. One transaction. The site
+/// loads its similarity index at start, so it sees the new vectors after a restart.
 /// </summary>
-internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, Confirm confirm, TextWriter output)
+internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, bool replace, Confirm confirm, TextWriter output)
 {
 	/// <summary>Fixed, not a setting: the site reads this table only.</summary>
 	private const string Table = "media_embeddings";
@@ -39,6 +40,7 @@ internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, C
 		await EnsureTableAsync(db, cancellationToken);
 		var (byKey, collisions) = SiteDatabase.MatchKeys(await SiteDatabase.ReadMediaFilesAsync(db, cancellationToken));
 		var collided = collisions.Select(g => SiteDatabase.MediaKey(g[0].FileName)).ToHashSet(StringComparer.Ordinal);
+		var withVector = replace ? [] : await ReadIdsWithVectorAsync(db, cancellationToken);
 
 		var rows = new List<(int Id, float[] Vector)>();
 		foreach (var (key, vector) in vectors.Where(v => media.Contains(v.Key)).OrderBy(v => v.Key, StringComparer.Ordinal))
@@ -46,15 +48,27 @@ internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, C
 			if (collided.Contains(key))
 				report.Error("the site has several files with this key; see the sync report", key);
 			else if (byKey.TryGetValue(key, out var file))
-				rows.Add((file.Id, vector));
+			{
+				if (withVector.Contains(file.Id))
+					report.Count("already have a vector on the site");
+				else
+					rows.Add((file.Id, vector));
+			}
 			else
 				report.Count("vectors without a file on the site");
 		}
 		report.Count("vectors to write", rows.Count);
-		output.WriteLine($"{rows.Count} vectors of {model} match site files, {report.Counts.GetValueOrDefault("vectors without a file on the site")} do not");
+		output.WriteLine($"{model}: {rows.Count} vectors to write, {report.Counts.GetValueOrDefault("already have a vector on the site")} files have one already"
+			+ $"{(replace ? "" : " (kept; --replace overwrites them)")}, {report.Counts.GetValueOrDefault("vectors without a file on the site")} without a file on the site");
 
 		if (rows.Count == 0)
 		{
+			if (report.Counts.GetValueOrDefault("already have a vector on the site") > 0)
+			{
+				await ReportFilesWithoutVectorAsync(db, report, cancellationToken);
+				report.Message = "the files of this workspace have vectors on the site already";
+				return null;
+			}
 			report.Message = "no vector matches a site file; run upload and sync first";
 			return "error";
 		}
@@ -65,7 +79,7 @@ internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, C
 			return null;
 		}
 
-		if (!confirm($"Write {rows.Count} vectors into {Table}, replacing the rows of these files:", [SiteDatabase.Describe(connectionString)]))
+		if (!confirm($"Write {rows.Count} vectors into {Table}{(replace ? ", replacing the vectors these files have" : "")}:", [SiteDatabase.Describe(connectionString)]))
 		{
 			report.Message = "not confirmed, nothing written";
 			return "needs_review";
@@ -95,25 +109,7 @@ internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, C
 		}
 		report.Count("written", rows.Count);
 
-		// The number that matters most: such files never show up among similar ones, and nobody notices.
-		await using (var command = new NpgsqlCommand($"""
-			SELECT m.file_name FROM media_files m
-			WHERE m.source = 'Local' AND m.type <> 'Unknown'
-			  AND NOT EXISTS (SELECT 1 FROM {Table} e WHERE e.media_file_id = m.id)
-			ORDER BY m.file_name
-			""", db))
-		await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-		{
-			var without = new List<string>();
-			while (await reader.ReadAsync(cancellationToken))
-				without.Add(reader.GetString(0));
-
-			report.Count("site files without a vector", without.Count);
-			foreach (string name in without)
-				report.Warn("no vector: it never shows up among similar files", SiteDatabase.MediaKey(name));
-			if (without.Count > 0)
-				output.WriteLine($"warning: {without.Count} site files have no vector, for example {string.Join(", ", without.Take(5))}");
-		}
+		await ReportFilesWithoutVectorAsync(db, report, cancellationToken);
 
 		report.Message = $"wrote {rows.Count} vectors; restart the backend so the similarity index loads them";
 		output.WriteLine(report.Message);
@@ -132,6 +128,41 @@ internal sealed class PushEmbeddingsStep(string connectionString, bool dryRun, C
 			if (Math.Abs(norm - 1.0) > 0.01)
 				throw new InvalidOperationException($"{key}: vector is not normalized (length {norm:F4}); run haru-analysis embed --reset");
 		}
+	}
+
+	/// <summary>
+	/// The number that matters most: files without a vector never show up among similar ones, and nobody notices.
+	/// </summary>
+	private async Task ReportFilesWithoutVectorAsync(NpgsqlConnection db, StepReport report, CancellationToken cancellationToken)
+	{
+		await using (var command = new NpgsqlCommand($"""
+			SELECT m.file_name FROM media_files m
+			WHERE m.source = 'Local' AND m.type <> 'Unknown'
+			  AND NOT EXISTS (SELECT 1 FROM {Table} e WHERE e.media_file_id = m.id)
+			ORDER BY m.file_name
+			""", db))
+		await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+		{
+			var without = new List<string>();
+			while (await reader.ReadAsync(cancellationToken))
+				without.Add(reader.GetString(0));
+
+			report.Count("site files without a vector", without.Count);
+			foreach (string name in without)
+				report.Warn("no vector: it never shows up among similar files", SiteDatabase.MediaKey(name));
+			if (without.Count > 0)
+				output.WriteLine($"warning: {without.Count} site files have no vector, for example {string.Join(", ", without.Take(5))}");
+		}
+	}
+
+	private static async Task<HashSet<int>> ReadIdsWithVectorAsync(NpgsqlConnection db, CancellationToken cancellationToken)
+	{
+		var ids = new HashSet<int>();
+		await using var command = new NpgsqlCommand($"SELECT media_file_id FROM {Table}", db);
+		await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+		while (await reader.ReadAsync(cancellationToken))
+			ids.Add(reader.GetInt32(0));
+		return ids;
 	}
 
 	private static async Task EnsureTableAsync(NpgsqlConnection db, CancellationToken cancellationToken)

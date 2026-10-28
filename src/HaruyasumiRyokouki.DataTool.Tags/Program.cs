@@ -116,8 +116,10 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			var pushEmbeddings = new Command("push-embeddings", "write the image vectors into media_embeddings of the site's database");
 			pushEmbeddings.Options.Add(YesOption);
 			pushEmbeddings.Options.Add(dryRun);
+			var replace = new Option<bool>("--replace") { Description = "overwrite the vectors the site has already; by default they are kept" };
+			pushEmbeddings.Options.Add(replace);
 			pushEmbeddings.SetAction((parse, cancellationToken) => RunStepAsync(parse, "push-embeddings", (workspace, db, report) =>
-				new PushEmbeddingsStep(SiteDatabase.ConnectionString(), parse.GetValue(dryRun), Confirmer(parse), Console.Out)
+				new PushEmbeddingsStep(SiteDatabase.ConnectionString(), parse.GetValue(dryRun), parse.GetValue(replace), Confirmer(parse), Console.Out)
 					.RunAsync(db, report, cancellationToken), cancellationToken));
 			root.Subcommands.Add(pushEmbeddings);
 

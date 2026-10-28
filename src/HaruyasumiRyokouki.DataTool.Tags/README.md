@@ -10,7 +10,7 @@ dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-tags --workspa
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- upload --workspace my-trip [--yes]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- sync --workspace my-trip [--yes]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- assign --workspace my-trip [--yes]
-dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-embeddings --workspace my-trip [--yes] [--dry-run]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-embeddings --workspace my-trip [--yes] [--dry-run] [--replace]
 ```
 
 Normally `haru-data run` starts the steps. A typo in an option is an error, not a silently ignored flag.
@@ -90,7 +90,7 @@ Each of these steps prints where it is going to write (API host, storage, databa
 2. `upload` copies the files of the source folder into the storage. A file whose key the storage already has with any extension is skipped: after a sync the site keeps a photo as `.webp` and deletes the original. The modification time goes along (on WebDAV through the `X-OC-MTime` header of Nextcloud and ownCloud), because the site dates a file without a date in its name by that time. A failed file is tried three times.
 3. `sync` calls `PUT /v1/media/sync` and waits until the site has imported the new files, which can take a long time for videos; while another sync runs, it waits and asks again. Then it reads `media_files` and stores the site id of every local file by key. A file the site did not import is a warning with the likely reason (not uploaded, or skipped by the site: no date, failed conversion); two site files with one key are an error.
 4. `assign` adds every approved tag to the site files with one of its sources, 500 files per request. It reports how many links were added and how many were already there.
-5. `push-embeddings` checks the vectors (one model, length 768, unit norm), matches them to `media_files` by key, photos and videos alike, and replaces the rows of those files in `media_embeddings` in one transaction with a binary `COPY`. It reports the site files left without a vector: they never show up among similar files. `--dry-run` stops before writing. The site loads its similarity index at start, so restart the backend afterwards.
+5. `push-embeddings` checks the vectors (one model, length 768, unit norm), matches them to `media_files` by key, photos and videos alike, and writes them into `media_embeddings` in one transaction with a binary `COPY`. A file that has a vector on the site already keeps it, so the vectors of earlier trips stay as they were computed; `--replace` overwrites them. It reports the site files left without a vector: they never show up among similar files. `--dry-run` stops before writing. The site loads its similarity index at start, so restart the backend afterwards.
 
 ## How it works with the backend
 
