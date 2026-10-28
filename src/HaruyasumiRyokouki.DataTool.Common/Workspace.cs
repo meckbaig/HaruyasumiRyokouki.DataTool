@@ -69,6 +69,22 @@ public sealed class Workspace
 	/// A string setting by dotted path, such as <c>backend.api</c>, or null when it is missing or empty.
 	/// </summary>
 	public string? GetString(string dottedPath)
+		=> GetValue(dottedPath) is string text && text.Length > 0 ? text : null;
+
+	/// <summary>A whole-number setting by dotted path, or null when it is missing.</summary>
+	/// <exception cref="WorkspaceException">The setting is not a whole number.</exception>
+	public int? GetInt(string dottedPath)
+	{
+		return GetValue(dottedPath) switch
+		{
+			null => null,
+			long number => checked((int)number),
+			var other => throw new WorkspaceException($"{dottedPath} in {ConfigName} must be a whole number, got '{other}'.")
+		};
+	}
+
+	/// <summary>The raw TOML value by dotted path: a string, number, boolean, table or array, or null.</summary>
+	public object? GetValue(string dottedPath)
 	{
 		object? node = Settings;
 		foreach (string part in dottedPath.Split('.'))
@@ -77,7 +93,7 @@ public sealed class Workspace
 				return null;
 		}
 
-		return node is string text && text.Length > 0 ? text : null;
+		return node;
 	}
 
 	/// <summary>
