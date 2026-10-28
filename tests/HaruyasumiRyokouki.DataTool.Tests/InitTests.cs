@@ -21,7 +21,8 @@ public sealed class InitTests : IDisposable
 
 		var workspace = Init.Create(folder, source);
 
-		Assert.Equal(source.Replace('\\', '/'), workspace.GetString("source"));
+		// The path as the system writes it, backslashes on Windows: the template quotes it so.
+		Assert.Equal(source, workspace.GetString("source"));
 		Assert.Equal("local", workspace.GetString("usage.vision"));
 		Assert.Equal("object", workspace.GetString("providers.deepseek.json_mode"));
 		Assert.Equal(200000, workspace.GetInt("providers.deepseek.max_tokens"));

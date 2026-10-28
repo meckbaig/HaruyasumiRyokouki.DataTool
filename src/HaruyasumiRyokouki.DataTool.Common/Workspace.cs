@@ -57,7 +57,7 @@ public sealed class Workspace
 		}
 		catch (TomlException ex)
 		{
-			throw new WorkspaceException($"{configPath}: {ex.Message}");
+			throw new WorkspaceException($"{configPath}: {ex.Message}{BackslashHint(File.ReadAllText(configPath))}");
 		}
 
 		var workspace = new Workspace(root, settings);
@@ -117,6 +117,19 @@ public sealed class Workspace
 			?? throw new WorkspaceException(
 				$"Set the {environmentVariable} environment variable or put it into .env in the workspace.");
 	}
+
+	/// <summary>
+	/// A Windows path pasted between double quotes is the likely cause of a broken settings file:
+	/// there a backslash starts an escape sequence. Returns a hint, or "" when no such string is found.
+	/// </summary>
+	internal static string BackslashHint(string toml)
+		=> BackslashInDoubleQuotes.IsMatch(toml)
+			? "\nA path with \\ between double quotes is read as escape sequences. Put it between single quotes, 'E:\\Photos\\Japan', or use forward slashes, \"E:/Photos/Japan\"."
+			: "";
+
+	/// <summary>A value between double quotes, before any comment, that contains a backslash.</summary>
+	private static readonly System.Text.RegularExpressions.Regex BackslashInDoubleQuotes =
+		new("""^[^#"\n]*=\s*"[^"\n]*\\[^"\n]*""", System.Text.RegularExpressions.RegexOptions.Multiline);
 
 	private static string? NonEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
 }

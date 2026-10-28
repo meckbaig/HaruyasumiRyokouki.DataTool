@@ -24,7 +24,23 @@ public sealed class WorkspaceTests : IDisposable
 	[Fact]
 	public void Invalid_toml_is_a_workspace_error()
 	{
-		Assert.Throws<WorkspaceException>(() => Create("source = "));
+		var ex = Assert.Throws<WorkspaceException>(() => Create("source = "));
+		Assert.DoesNotContain("single quotes", ex.Message);
+	}
+
+	[Fact]
+	public void A_windows_path_in_double_quotes_gets_a_hint_and_single_quotes_work()
+	{
+		var ex = Assert.Throws<WorkspaceException>(() => Create("""
+			[storage]
+			path = "E:\User\Media"  # the backend's folder
+			"""));
+		Assert.Contains("single quotes", ex.Message);
+
+		Assert.Equal(@"E:\User\Media", Create("""
+			[storage]
+			path = 'E:\User\Media'
+			""").GetString("storage.path"));
 	}
 
 	[Fact]

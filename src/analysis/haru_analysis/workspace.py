@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,18 @@ class WorkspaceError(Exception):
     """A problem the user has to fix before the step can run."""
 
 
+# A value between double quotes, before any comment, that contains a backslash.
+_BACKSLASH_IN_DOUBLE_QUOTES = re.compile(r'^[^#"\n]*=\s*"[^"\n]*\\[^"\n]*"', re.MULTILINE)
+
+
+def _backslash_hint(config_path):
+    """A Windows path pasted between double quotes is the likely cause of a broken settings file."""
+    if _BACKSLASH_IN_DOUBLE_QUOTES.search(config_path.read_text(encoding="utf-8", errors="replace")):
+        return ("\nA path with \\ between double quotes is read as escape sequences. Put it between"
+                " single quotes, 'E:\\Photos\\Japan', or use forward slashes, \"E:/Photos/Japan\".")
+    return ""
+
+
 class Workspace:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -35,7 +48,7 @@ class Workspace:
             with open(config_path, "rb") as f:
                 self.config = tomllib.load(f)
         except tomllib.TOMLDecodeError as exc:
-            raise WorkspaceError(f"{config_path}: {exc}") from exc
+            raise WorkspaceError(f"{config_path}: {exc}{_backslash_hint(config_path)}") from exc
 
         self.db_path = self.root / "work.sqlite"
         self.frames_dir = self.root / "frames"

@@ -20,8 +20,7 @@ internal static class Init
 			throw new WorkspaceException($"Source folder {sourcePath} does not exist.");
 
 		Directory.CreateDirectory(root);
-		// TOML basic strings take forward slashes on every system; backslashes would need escaping.
-		File.WriteAllText(config, Template.Replace("{source}", sourcePath.Replace('\\', '/')));
+		File.WriteAllText(config, Template.Replace("{source}", sourcePath));
 		string env = Path.Combine(root, ".env");
 		if (!File.Exists(env))
 			File.WriteAllText(env, EnvTemplate);
@@ -34,9 +33,11 @@ internal static class Init
 	public const string Template = """
 		# Settings of a haru-data workspace. Secrets go into .env next to this file or into
 		# environment variables, never here. Steps read this file every time they start.
+		# Paths are in single quotes: a Windows path can be pasted as it is. In double quotes
+		# a backslash starts an escape sequence, so there write E:/Photos or E:\\Photos.
 
 		# Folder with the photos and videos of the trip; subfolders are included.
-		source = "{source}"
+		source = '{source}'
 
 		# Language models: any OpenAI-compatible server, local or in the cloud.
 		# [usage] below picks one for each task. See "Choosing models" in the README.
@@ -77,7 +78,7 @@ internal static class Init
 		# this computer: a local path, or a network share of the server.
 		[storage]
 		type = "local"
-		path = ""
+		path = ''
 		concurrency = 4            # parallel copies
 		# If the backend keeps media in Nextcloud instead (MediaStorage:Provider = WebDav):
 		# type = "webdav"

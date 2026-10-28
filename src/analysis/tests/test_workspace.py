@@ -11,6 +11,17 @@ def test_missing_config_is_a_clear_error(tmp_path):
         Workspace(tmp_path)
 
 
+def test_windows_path_in_double_quotes_gets_a_hint(tmp_path):
+    (tmp_path / "haru-data.toml").write_text('source = "E:\\User\\Photos"\n', encoding="utf-8")
+    with pytest.raises(WorkspaceError, match="single quotes"):
+        Workspace(tmp_path)
+
+
+def test_windows_path_in_single_quotes_is_read_as_is(tmp_path):
+    (tmp_path / "haru-data.toml").write_text("source = 'E:\\User\\Photos'\n", encoding="utf-8")
+    assert Workspace(tmp_path).config["source"] == "E:\\User\\Photos"
+
+
 def test_relative_source_is_resolved_against_workspace(tmp_path):
     (tmp_path / "pics").mkdir()
     (tmp_path / "haru-data.toml").write_text("source = 'pics'\n", encoding="utf-8")
