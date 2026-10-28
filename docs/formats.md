@@ -6,7 +6,8 @@ What the apps of the data tool exchange: the workspace folder, step reports and 
 
 ```
 my-trip/
-  vocabulary.yaml  the vocabulary for review (haru-tags vocab)
+  vocabulary.yaml  the English vocabulary for review (haru-tags vocab)
+  translations.yaml  the translations of its new tags (haru-tags translate)
   haru-data.toml   settings, no secrets
   .env             secrets (optional, environment variables work too)
   work.sqlite      state of all steps
@@ -78,7 +79,7 @@ Each app creates its tables on first use and writes only its own row. An app ref
 | `dim` | vector length (768 for the site's model) |
 | `vector` | `dim` little-endian float32, L2-normalized |
 
-### Owner: tags (version 3)
+### Owner: tags (version 4)
 
 Written by `haru-tags vocab`, which replaces their content on every run (the model answers come from `cache/llm/`, so a rerun is cheap), and by `haru-tags review --approve`, which replaces them with the reviewed `vocabulary.yaml`. After the approval the tables hold exactly the file: kept tags only, named by their English label.
 
@@ -125,6 +126,14 @@ Written by `haru-tags vocab`, which replaces their content on every run (the mod
 | `file_sha256` | SHA-256 of the approved `vocabulary.yaml` |
 | `approved_at` | time of the approval, UTC |
 
+**vocab_translations** — at most one row: the new tags of an approved vocabulary are translated (`haru-tags translate`), their labels and aliases are in `vocab_tags` and `vocab_aliases`. A new approval of the vocabulary deletes it. `push-tags` requires the row to belong to the current approval and the hash to match the current `translations.yaml`.
+
+| column | |
+|---|---|
+| `vocabulary_sha256` | the approved `vocabulary.yaml` the translations were made for |
+| `file_sha256` | SHA-256 of the approved `translations.yaml`; NULL while it waits for review |
+| `approved_at` | time of the approval, UTC; NULL while it waits |
+
 ### Owner: site (version 1)
 
 Written by the haru-tags steps that write to the site: what the site calls the tags and files of this workspace.
@@ -155,5 +164,5 @@ Written by `haru-data run`. The vocabulary step and the steps that write to the 
 | column | |
 |---|---|
 | `step` | primary key: step name |
-| `fingerprint` | short hash of the input: the machine tags for `vocab`, the approved file for `push-tags`, the file keys for `upload` and `sync`, the approved file and the site ids for `assign`, the vectors and the site ids for `push-embeddings` |
+| `fingerprint` | short hash of the input: the machine tags for `vocab`, the approved vocabulary for `translate`, the approved vocabulary and translations for `push-tags`, the file keys for `upload` and `sync`, the approved file and the site ids for `assign`, the vectors and the site ids for `push-embeddings` |
 | `finished_at` | time it finished, UTC |

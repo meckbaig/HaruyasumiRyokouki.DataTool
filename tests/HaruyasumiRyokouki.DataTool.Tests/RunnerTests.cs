@@ -72,6 +72,19 @@ public sealed class RunnerTests : IDisposable
 	}
 
 	[Fact]
+	public void Translations_with_problems_stop_the_run_unless_no_review_approves_them()
+	{
+		_launcher.Codes["translate"] = ExitCodes.NeedsReview;
+		Assert.Equal(ExitCodes.NeedsReview, Runner(yes: true).Run());
+		Assert.Equal("translate", _launcher.Calls[^1]);
+
+		_launcher.Calls.Clear();
+		Assert.Equal(ExitCodes.Ok, Runner(yes: true, noReview: true).Run());
+		// The four analysis steps, vocab is up to date, then:
+		Assert.Equal(["review --approve", "translate", "review --approve", "push-tags --yes"], _launcher.Calls.Skip(4).Take(4));
+	}
+
+	[Fact]
 	public void A_declined_cloud_step_stops_without_running_it()
 	{
 		Assert.Equal(ExitCodes.NeedsReview, Runner(confirm: false).Run());

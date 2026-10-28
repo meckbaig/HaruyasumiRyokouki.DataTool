@@ -30,17 +30,27 @@ public sealed class SiteTests : IDisposable
 		tags:
 		- slug: torii
 		  en: torii
+		  aliases: [shrine gate]
+		  sources: [torii]
+		- slug: ramen
+		  en: ramen
+		  aliases: []
+		  sources: [ramen]
+		dropped: []
+		""";
+
+	private const string Translations = """
+		tags:
+		- slug: torii
+		  en: torii
 		  ru: тории
 		  ja: 鳥居
 		  aliases: {en: [shrine gate], ru: [], ja: []}
-		  sources: [torii]
 		- slug: ramen
 		  en: ramen
 		  ru: рамен
 		  ja: ラーメン
 		  aliases: {en: [], ru: [], ja: []}
-		  sources: [ramen]
-		dropped: []
 		""";
 
 	private static readonly Confirm Yes = (_, _) => true;
@@ -89,7 +99,14 @@ public sealed class SiteTests : IDisposable
 		VocabDb.Ensure(_db);
 		var tags = VocabularyCheck.Run(Vocabulary, new HashSet<string> { "torii", "ramen" }).Tags;
 		var keys = new Dictionary<string, HashSet<string>> { ["torii"] = ["a", "b"], ["ramen"] = ["b", "c"] };
-		VocabDb.Approve(_db, tags, keys, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(_workspace.VocabularyPath))).ToLowerInvariant());
+		string vocabulary = VocabDb.FileSha256(_workspace.VocabularyPath);
+		VocabDb.Approve(_db, tags, keys, vocabulary);
+
+		// The translations as the translate step leaves them when it finds no problems.
+		File.WriteAllText(_workspace.TranslationsPath, Translations);
+		var translated = VocabularyCheck.RunTranslations(Translations, ["torii", "ramen"]);
+		Assert.Empty(translated.Issues);
+		VocabDb.SaveTranslations(_db, translated.Tags, vocabulary, VocabDb.FileSha256(_workspace.TranslationsPath));
 	}
 
 	private Dictionary<string, (long Id, long Created)> SiteTags()
@@ -111,7 +128,7 @@ public sealed class SiteTests : IDisposable
 			? Json($$"""{"items": [{{string.Join(",", site)}}]}""")
 			: Json("""{"tag": {"id": 9, "slug": "ramen"}}"""));
 		using var api = new BackendApi(new Uri("http://backend.test"), "u", "p", handler);
-		var step = new PushTagsStep(api, _workspace.VocabularyPath, Yes, TextWriter.Null);
+		var step = new PushTagsStep(api, _workspace.VocabularyPath, _workspace.TranslationsPath, Yes, TextWriter.Null);
 
 		await Assert.ThrowsAsync<WorkspaceException>(() => step.RunAsync(_db, new StepReport("push-tags"), default));
 
@@ -152,7 +169,7 @@ public sealed class SiteTests : IDisposable
 		using var api = new BackendApi(new Uri("http://backend.test"), "u", "p", handler);
 
 		var report = new StepReport("push-tags");
-		await new PushTagsStep(api, _workspace.VocabularyPath, Yes, TextWriter.Null).RunAsync(_db, report, default);
+		await new PushTagsStep(api, _workspace.VocabularyPath, _workspace.TranslationsPath, Yes, TextWriter.Null).RunAsync(_db, report, default);
 
 		var error = Assert.Single(report.Errors);
 		Assert.Equal("torii", error.Key);
@@ -167,7 +184,7 @@ public sealed class SiteTests : IDisposable
 		var handler = new FakeHandler((_, _) => Json("""{"items": []}"""));
 		using var api = new BackendApi(new Uri("http://backend.test"), "u", "p", handler);
 
-		var status = await new PushTagsStep(api, _workspace.VocabularyPath, (_, _) => false, TextWriter.Null)
+		var status = await new PushTagsStep(api, _workspace.VocabularyPath, _workspace.TranslationsPath, (_, _) => false, TextWriter.Null)
 			.RunAsync(_db, new StepReport("push-tags"), default);
 
 		Assert.Equal("needs_review", status);

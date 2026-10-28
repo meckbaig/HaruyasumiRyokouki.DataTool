@@ -5,10 +5,10 @@ Tool that fills the [HaruyasumiRyokouki](https://github.com/meckbaig/HaruyasumiR
 How the data flows:
 
 1. **haru-analysis** (Python, runs locally) indexes the folder, takes a frame from every video, asks a vision model for tags and names on every photo and computes SigLIP 2 image vectors. See [src/analysis/README.md](src/analysis/README.md).
-2. **haru-tags** (.NET) turns the machine tags into a vocabulary with a cloud model: merges duplicates, drops what nobody would search for, translates through the site's AI. After a person has reviewed it, it creates the tags on the site, uploads the files, lets the site import them and attaches tags and vectors. See [src/HaruyasumiRyokouki.DataTool.Tags/README.md](src/HaruyasumiRyokouki.DataTool.Tags/README.md).
+2. **haru-tags** (.NET) turns the machine tags into a vocabulary with a cloud model: merges duplicates and drops what nobody would search for. After a person has reviewed it, it translates the tags that are left through the site's AI, then creates the tags on the site, uploads the files, lets the site import them and attaches tags and vectors. See [src/HaruyasumiRyokouki.DataTool.Tags/README.md](src/HaruyasumiRyokouki.DataTool.Tags/README.md).
 3. **haru-data** (.NET) is the entry point: it creates a workspace, runs the steps in order, stops for the review and for confirmations, and shows where a run stands. See [src/HaruyasumiRyokouki.DataTool/README.md](src/HaruyasumiRyokouki.DataTool/README.md).
 
-All state of a trip lives in one workspace folder: settings, `work.sqlite` with the results of every step, `vocabulary.yaml` for the review and a report per step. The formats are in [docs/formats.md](docs/formats.md).
+All state of a trip lives in one workspace folder: settings, `work.sqlite` with the results of every step, `vocabulary.yaml` and `translations.yaml` for the review and a report per step. The formats are in [docs/formats.md](docs/formats.md).
 
 ## Requirements
 
@@ -38,7 +38,7 @@ Three folders take part, and they are easy to mix up:
 | Folder | What it is | Where it is set |
 |---|---|---|
 | **Source folder** | The photos and videos of the trip on your computer, collected by you. The tool only reads them and never changes them. | `--source` of `haru-data init`, then `source` in `haru-data.toml` |
-| **Workspace** | The state of one trip: `haru-data.toml` (settings), `.env` (secrets), `work.sqlite` (results of every step), `vocabulary.yaml` (the vocabulary for the review), `reports/` (a report per step), `frames/` (frames of videos), `cache/llm/` (answers of the cloud model). Created by `haru-data init`; `run`, `status` and the other commands work in it. Keep it until the trip is on the site, and for adding photos later. | the argument of `init`, then `--workspace` or the current folder |
+| **Workspace** | The state of one trip: `haru-data.toml` (settings), `.env` (secrets), `work.sqlite` (results of every step), `vocabulary.yaml` (the tag list for the review), `translations.yaml` (the translations of the new tags), `reports/` (a report per step), `frames/` (frames of videos), `cache/llm/` (answers of the cloud model). Created by `haru-data init`; `run`, `status` and the other commands work in it. Keep it until the trip is on the site, and for adding photos later. | the argument of `init`, then `--workspace` or the current folder |
 | **Site storage** | The folder the backend imports new media from (`LocalStorageProvider:Path` of the backend, or a Nextcloud folder if the backend uses WebDAV). The site only imports files that lie there, so `upload` copies the photos there, and `sync` asks the site to import them; the site converts them and keeps them there. | `[storage]` in `haru-data.toml` |
 
 ## Step-by-step guide
@@ -118,13 +118,13 @@ What happens:
    ```
 
    Type `y` and Enter. This takes a few minutes and costs about $0.10 per 4,000 photos.
-3. The run **stops** with the message `The vocabulary waits for you.` This is not an error: the tag list is ready and waits for your check.
+3. The run **stops** with the message `A file waits for you`. This is not an error: the tag list is ready and waits for your check.
 
 ### Step 4. Check the tag list
 
-Open `vocabulary.yaml` in the workspace with any text editor. At the top are the problems the tool found; below is every tag with its name in English (`en`), Russian (`ru`) and Japanese (`ja`), other words people may search for (`aliases`) and the number of photos with it. At the end are the tags the model threw away, with the reason.
+Open `vocabulary.yaml` in the workspace with any text editor. The list is in English only: the translations are made after your check, so nothing is translated that you delete. At the top are the problems the tool found; below is every tag with its English name (`en`), other English words people may search for (`aliases`) and the number of photos with it. At the end are the tags the model threw away, with the reason.
 
-Change what you do not like: fix a translation, delete a tag (its whole block), or move a thrown-away tag back up. You may also change nothing.
+Change what you do not like: rename a tag, delete a tag (its whole block), or move a thrown-away tag back up. You may also change nothing.
 
 Check the file:
 
@@ -140,13 +140,29 @@ haru-data review --approve
 
 It prints `approved N tags`. If you edit the file after that, approve it again.
 
-### Step 5. Second run: put everything on the site
+### Step 5. Second run: translations
 
 ```
 haru-data run
 ```
 
-The same command again. The photo steps find nothing new and pass in seconds. Then the tool writes to the site in five steps. **Before each step it prints where it is going to write and asks**:
+The same command again. The photo steps find nothing new and pass in seconds. Then the tool translates the new tags of your list into Russian and Japanese through the site's AI and checks the result: an empty translation, two tags with the same name in one language, or a text the site does not accept.
+
+- **No problems:** the translations are approved by themselves and the run goes on to step 6 without stopping.
+- **Problems found:** the run **stops** again with `A file waits for you`. Open `translations.yaml` in the workspace: the problems are at the top with line numbers, below is every new tag with its names in English, Russian and Japanese (`en`, `ru`, `ja`) and search words per language (`aliases`). Fix the problems, then, as in step 4:
+
+  ```
+  haru-data review --check
+  haru-data review --approve
+  ```
+
+  and run `haru-data run` again; it goes on to step 6.
+
+Tags are not added or deleted in `translations.yaml`; that is done in `vocabulary.yaml`. If you change `vocabulary.yaml` now, approve it again; the translations are then made again (from the cache, so it is quick) and checked again.
+
+### Step 6. Put everything on the site
+
+If the run stopped in step 5, this is the third `haru-data run`; otherwise the second run simply goes on. The tool writes to the site in five steps. **Before each step it prints where it is going to write and asks**:
 
 ```
 Create 223 tags on the site:
@@ -164,11 +180,11 @@ Check that the address is your site and type `y`. The steps are:
 
 At the end it prints `All steps are done.`
 
-### Step 6. Restart the backend
+### Step 7. Restart the backend
 
 Restart the site's backend so it loads the new data for "similar photos".
 
-### Step 7. Approve the photos on the site
+### Step 8. Approve the photos on the site
 
 The new photos are visible only to the admin until they are approved. Open the admin panel, look through them, fix tags where the model was wrong, and approve them. Done.
 
@@ -182,7 +198,7 @@ If you answered `n` to a question, nothing was written; run `haru-data run` agai
 
 ### Adding photos later
 
-Add the new photos to the same photo folder and run `haru-data run` in the same workspace. Only the new photos are analysed. If they bring tags the list does not have yet, the run stops for the check again (step 4); then run `haru-data run` once more. Only the new files are uploaded.
+Add the new photos to the same photo folder and run `haru-data run` in the same workspace. Only the new photos are analysed. If they bring tags the list does not have yet, the run stops for the check again (step 4, and step 5 if the new translations have problems); then run `haru-data run` once more. Only the new files are uploaded.
 
 ## Commands
 
@@ -223,7 +239,7 @@ Without `<step>`: does all steps that are not done, in their order, and stops wh
 |---|---|
 | `<step>` | Optional. The name of one step from [the list of steps](#steps), such as `sync`. |
 | `--yes` | Optional. Answers "yes" to every question: before the paid cloud step and before every write to the site. What would be asked is still printed. Use it only when you are sure of the settings, or where nobody can answer. |
-| `--no-review` | Optional. Approves the tag list as the model made it, instead of stopping for your check. |
+| `--no-review` | Optional. Approves the tag list and the translations as they were made, instead of stopping for your check. |
 
 The options can be combined with each other and with `<step>`:
 
@@ -249,13 +265,13 @@ Shows every step with its state (`done`, `to run`, `errors`, `waiting for you`, 
 haru-data review [--check | --approve]
 ```
 
-Works with the tag list `vocabulary.yaml`. Use one option or none.
+Works with the file that waits for your check: `vocabulary.yaml` (the tag list) until it is approved, then `translations.yaml` if the translations had problems. The output starts with the name of the file. Use one option or none.
 
 | Form | Meaning |
 |---|---|
-| `haru-data review` | Prints a summary of the tag list and whether it is approved. |
+| `haru-data review` | Prints a summary of the file and whether it is approved. |
 | `haru-data review --check` | Checks the edited file and prints each problem with its line number. Changes nothing. |
-| `haru-data review --approve` | Checks the file and, if there are no errors, approves it: from now on it is the list that goes to the site. |
+| `haru-data review --approve` | Checks the file and, if there are no errors, approves it: from now on it is what goes to the site. |
 
 ### Steps
 
@@ -267,9 +283,10 @@ Works with the tag list `vocabulary.yaml`. Use one option or none.
 | `frames` | Takes a picture from every video at 1 second, for the analysis | every time; skips videos that are done |
 | `tag` | Asks the vision model (LM Studio) which tags fit every photo | every time; skips photos that are done |
 | `embed` | Computes the data for "similar photos" | every time; skips photos that are done |
-| `vocab` | Makes one tag list from the tags of all photos with the cloud model, with translations; writes `vocabulary.yaml` | when the photos brought new tags; asks first, because it costs money |
-| `review` | Stops until you approve `vocabulary.yaml` | every time; passes at once when the list is approved |
-| `push-tags` | Creates the new tags on the site | when a new tag list was approved; asks first |
+| `vocab` | Makes one English tag list from the tags of all photos with the cloud model; writes `vocabulary.yaml` | when the photos brought new tags; asks first, because it costs money |
+| `review` | Stops until you approve `vocabulary.yaml`, and `translations.yaml` if it waits | every time; passes at once when everything is approved |
+| `translate` | Translates the new tags of the approved list through the site's AI and checks them; writes `translations.yaml` and stops only if it found problems | when a new tag list was approved |
+| `push-tags` | Creates the new tags on the site, with their translations | when a new tag list or new translations were approved; asks first |
 | `upload` | Copies the photos and videos the site does not have into its storage | when photos were added; asks first |
 | `sync` | Lets the site import the new files | when photos were added; asks first |
 | `assign` | Puts the tags on the photos on the site; never removes a tag | when the tag list or the files on the site changed; asks first |
@@ -293,6 +310,7 @@ haru-tags <step> --workspace <folder>                                           
 | `haru-analysis tag --vocabulary-hint <file>` | Gives the model a text file with tags, one per line, to prefer. |
 | `haru-analysis embed --reset` | Deletes the "similar photos" data and computes it again. |
 | `haru-tags status` | What the analysis found: photos, tagged photos, distinct tags. |
+| `haru-tags translate` | Translates the approved new tags; a file that waits for review is not overwritten. |
 | `haru-tags vocab --estimate` | Prints what `vocab` would send to the cloud model; sends nothing. |
 | `haru-tags push-embeddings --dry-run` | Reports what would be saved; saves nothing. |
 | `haru-tags push-embeddings --replace` | Also overwrites the "similar photos" data the site has already. |
@@ -334,7 +352,7 @@ Two steps use language models, and they need different ones. All numbers below c
 | `qwen3.6-35b-a3b` (IQ3_S) | LM Studio, ~16 GB video memory | ~9 hours | free | Knows more franchises and dishes, but adds more noise and invents some names. Not worth the hardware for most people. |
 | `deepseek-flash` | DeepSeek API, many requests in parallel | minutes (92 photos in 10 s with 32 parallel requests) | ~$0.9 off-peak, ~$1.8 peak | Best: recognizes noticeably more places, dishes and franchises. |
 
-**Building the vocabulary** needs a model that reasons over the whole list of tags at once: which entries are the same thing, which are noise. Local models tested so far cannot do it reliably: they merge different things into broad categories, drop useful tags or break the answer format. Use a cloud model: `deepseek-flash` (with reasoning on) does it for about $0.10 off-peak for a 4,200-photo trip. Translations of the final tags go through the site's own `/v1/tags/completion`, so they use whatever model the backend is configured with.
+**Building the vocabulary** needs a model that reasons over the whole list of tags at once: which entries are the same thing, which are noise. Local models tested so far cannot do it reliably: they merge different things into broad categories, drop useful tags or break the answer format. Use a cloud model: `deepseek-flash` (with reasoning on) does it for about $0.10 off-peak for a 4,200-photo trip. Translations go through the site's own `/v1/tags/completion` after the review, only for the new tags that are left, so they use whatever model the backend is configured with.
 
 In total, a 4,200-photo trip costs about **$0.10 to $0.20** with local tagging, or **$1 to $2** with tagging by DeepSeek (prices of October 2026). Every step reports the tokens it used, so the cost of an actual run is known.
 

@@ -48,16 +48,15 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			{
 				var chat = new ChatService(LlmProvider.FromWorkspace(workspace, "vocabulary"), workspace.LlmCacheDir);
 				using var api = BackendApi.FromWorkspace(workspace);
-				// The backend's AI may be a free tier with a low request rate; raise it for a paid one.
-				var translator = new Translator(api, workspace.LlmCacheDir, workspace.GetInt("vocabulary.translate_concurrency") ?? 4, Console.Out);
-				await new VocabStep(chat, api, translator, workspace.VocabularyPath, Console.Out).RunAsync(db, report, cancellationToken);
+				await new VocabStep(chat, api, workspace.VocabularyPath, Console.Out).RunAsync(db, report, cancellationToken);
 				return null;
 			}, cancellationToken));
 			root.Subcommands.Add(vocab);
 
-			var check = new Option<bool>("--check") { Description = "check the edited vocabulary.yaml, with line numbers" };
-			var approve = new Option<bool>("--approve") { Description = "check vocabulary.yaml and make it the vocabulary written to the site" };
-			var review = new Command("review", "summary of the vocabulary and whether it is approved; exits with 2 while it waits for review");
+			var check = new Option<bool>("--check") { Description = "check the edited file that waits for review, with line numbers" };
+			var approve = new Option<bool>("--approve") { Description = "check the file that waits for review and approve it" };
+			var review = new Command("review",
+				"the file that waits for a person: vocabulary.yaml until it is approved, then translations.yaml if the translations have problems; exits with 2 while it waits");
 			review.Options.Add(check);
 			review.Options.Add(approve);
 			review.Validators.Add(result =>
@@ -68,16 +67,26 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			review.SetAction((parse, cancellationToken) => RunStepAsync(parse, "review", (workspace, db, report) =>
 			{
 				var mode = parse.GetValue(approve) ? ReviewStep.Mode.Approve : parse.GetValue(check) ? ReviewStep.Mode.Check : ReviewStep.Mode.Summary;
-				return Task.FromResult<string?>(new ReviewStep(workspace.VocabularyPath, Console.Out).Run(db, mode, report));
+				return Task.FromResult<string?>(new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, Console.Out).Run(db, mode, report));
 			}, cancellationToken));
 			root.Subcommands.Add(review);
+
+			var translate = new Command("translate", "translate the new tags of the approved vocabulary through the site's AI and check them");
+			translate.SetAction((parse, cancellationToken) => RunStepAsync(parse, "translate", async (workspace, db, report) =>
+			{
+				using var api = BackendApi.FromWorkspace(workspace);
+				// The backend's AI may be a free tier with a low request rate; raise it for a paid one.
+				var translator = new Translator(api, workspace.LlmCacheDir, workspace.GetInt("vocabulary.translate_concurrency") ?? 4, Console.Out);
+				return await new TranslateStep(translator, workspace.VocabularyPath, workspace.TranslationsPath, Console.Out).RunAsync(db, report, cancellationToken);
+			}, cancellationToken));
+			root.Subcommands.Add(translate);
 
 			var pushTags = new Command("push-tags", "create the approved tags the site does not have");
 			pushTags.Options.Add(YesOption);
 			pushTags.SetAction((parse, cancellationToken) => RunStepAsync(parse, "push-tags", async (workspace, db, report) =>
 			{
 				using var api = BackendApi.FromWorkspace(workspace);
-				return await new PushTagsStep(api, workspace.VocabularyPath, Confirmer(parse), Console.Out).RunAsync(db, report, cancellationToken);
+				return await new PushTagsStep(api, workspace.VocabularyPath, workspace.TranslationsPath, Confirmer(parse), Console.Out).RunAsync(db, report, cancellationToken);
 			}, cancellationToken));
 			root.Subcommands.Add(pushTags);
 

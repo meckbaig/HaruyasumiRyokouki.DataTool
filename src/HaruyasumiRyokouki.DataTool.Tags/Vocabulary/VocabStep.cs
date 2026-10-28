@@ -5,11 +5,12 @@ using Microsoft.Data.Sqlite;
 namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 
 /// <summary>
-/// Step vocab: from the raw tags and names of all photos to a vocabulary. Mechanical normalization
-/// first, then one request to find duplicates in the whole list, keep-or-drop in batches,
-/// translations through the backend, checks, and vocabulary.yaml for the review.
+/// Step vocab: from the raw tags and names of all photos to an English vocabulary. Mechanical
+/// normalization first, then one request to find duplicates in the whole list, keep-or-drop in
+/// batches, matching with the site's tags, checks, and vocabulary.yaml for the review. Nothing is
+/// translated here: the translate step does it after the review, for the tags that are left.
 /// </summary>
-internal sealed class VocabStep(ChatService chat, BackendApi api, Translator translator, string vocabularyPath, TextWriter output)
+internal sealed class VocabStep(ChatService chat, BackendApi api, string vocabularyPath, TextWriter output)
 {
 	public async Task RunAsync(SqliteConnection connection, StepReport report, CancellationToken cancellationToken = default)
 	{
@@ -26,7 +27,7 @@ internal sealed class VocabStep(ChatService chat, BackendApi api, Translator tra
 			return;
 		}
 
-		// Before the model is paid: translations need the backend, and the site's tags are matched.
+		// Before the model is paid: the site's tags are matched, so the backend must answer.
 		await api.EnsureReachableAsync(cancellationToken);
 		var existing = await api.GetTagsAsync(cancellationToken);
 		report.Count("site tags", existing.Count);
@@ -37,17 +38,14 @@ internal sealed class VocabStep(ChatService chat, BackendApi api, Translator tra
 		await DecideKeepOrDropAsync(tags, warnings, cancellationToken);
 
 		Translator.MatchExisting(tags, existing);
-		var translationErrors = new List<string>();
-		await translator.TranslateAsync(tags, translationErrors, cancellationToken);
-		foreach (string error in translationErrors)
-			report.Error(error);
+		foreach (var tag in tags.Where(t => t.Keep))
+			Translator.SetEnglish(tag);
 
 		var problems = warnings.Select(w => new Checks.Problem("model", null, w))
-			.Concat(translationErrors.Select(e => new Checks.Problem("translation", null, e)))
 			.Concat(Checks.Run(tags))
 			.ToList();
 		VocabDb.Save(connection, tags, problems);
-		VocabularyFile.From(tags).Write(vocabularyPath, problems);
+		VocabularyFile.From(tags).Write(vocabularyPath, problems.Select(p => (p.Tag is null ? "" : p.Tag + ": ") + p.Message));
 
 		report.Count("kept", tags.Count(t => t.Keep));
 		report.Count("dropped", tags.Count(t => !t.Keep));
@@ -94,7 +92,6 @@ internal sealed class VocabStep(ChatService chat, BackendApi api, Translator tra
 		long inputTokens = (dedupe.Length + filterChars) / 4;
 		output.WriteLine($"vocab estimate for {provider.Name} ({provider.Model}):");
 		output.WriteLine($"  {1 + batches.Count} requests, about {inputTokens:N0} input tokens; the answers are shorter, thinking models add their reasoning");
-		output.WriteLine($"  up to {entries.Count} translation requests to the backend's AI (tags the site already has are not translated)");
 		output.WriteLine("  answers in cache/llm from an earlier run are not sent again");
 	}
 

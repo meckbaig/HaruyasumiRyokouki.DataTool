@@ -13,7 +13,7 @@ internal sealed class Runner(Workspace workspace, IStepLauncher launcher, TextWr
 	/// <summary>Pass --yes to the steps and do not ask before the cloud step.</summary>
 	public bool Yes { get; init; }
 
-	/// <summary>Approve vocabulary.yaml as it is instead of stopping for the review.</summary>
+	/// <summary>Approve vocabulary.yaml and translations.yaml as they are instead of stopping for the review.</summary>
 	public bool NoReview { get; init; }
 
 	/// <summary>Asks before the cloud step; replaced in tests.</summary>
@@ -88,14 +88,18 @@ internal sealed class Runner(Workspace workspace, IStepLauncher launcher, TextWr
 				break;
 		}
 
-		return launcher.Run(step.App, step.Name, arguments);
+		int code = launcher.Run(step.App, step.Name, arguments);
+		// The translations wait for a review; --no-review approves them as they are.
+		if (code == ExitCodes.NeedsReview && step.Kind == StepKind.OnChange && NoReview)
+			code = launcher.Run(App.Tags, "review", ["--approve"]);
+		return code;
 	}
 
-	private static string Waiting(Step step) => step.Kind == StepKind.Review
+	private static string Waiting(Step step) => step.Kind is StepKind.Review or StepKind.OnChange
 		? """
-			The vocabulary waits for you. Read vocabulary.yaml in the workspace (the problems are at the top),
-			edit it if needed, check it with 'haru-data review --check', approve it with 'haru-data review --approve',
-			then run 'haru-data run' again.
+			A file waits for you; its name is above (vocabulary.yaml or translations.yaml in the workspace).
+			Open it, read the problems at the top, edit it if needed, check it with 'haru-data review --check',
+			approve it with 'haru-data review --approve', then run 'haru-data run' again.
 			"""
 		: step.Kind == StepKind.Cloud
 			? $"{step.Name} was not confirmed, nothing was sent. Run 'haru-data run' again to continue, with --yes where nobody can answer."

@@ -11,7 +11,7 @@ namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 internal static class VocabDb
 {
 	public const string Owner = "tags";
-	public const int SchemaVersion = 3;
+	public const int SchemaVersion = 4;
 
 	private const string Schema = """
 		CREATE TABLE IF NOT EXISTS vocab_tags (
@@ -47,6 +47,12 @@ internal static class VocabDb
 		  file_sha256 TEXT NOT NULL,
 		  approved_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS vocab_translations (
+		  id                INTEGER PRIMARY KEY CHECK (id = 1),
+		  vocabulary_sha256 TEXT NOT NULL,
+		  file_sha256       TEXT,
+		  approved_at       TEXT
+		);
 		""";
 
 	public static void Ensure(SqliteConnection connection) => WorkDb.EnsureOwnSchema(connection, Owner, SchemaVersion, Schema);
@@ -56,7 +62,7 @@ internal static class VocabDb
 	{
 		using var transaction = connection.BeginTransaction();
 		// A new vocabulary needs a new review.
-		Execute(connection, "DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
+		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
 
 		foreach (var tag in tags)
 		{
@@ -112,7 +118,8 @@ internal static class VocabDb
 				$"marked \"existing: true\", but not matched to a site tag by the vocab step: {string.Join(", ", unknown)}. Set existing to false or run vocab again.");
 
 		using var transaction = connection.BeginTransaction();
-		Execute(connection, "DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags;");
+		// A new vocabulary needs new translations.
+		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags;");
 
 		foreach (var tag in tags)
 		{
@@ -125,7 +132,7 @@ internal static class VocabDb
 				VALUES ($tag, $kind, $photos, 'keep', $slug, $en, $ru, $ja, $existing)
 				""",
 				("$tag", name), ("$kind", tag.Kind), ("$photos", photos), ("$slug", tag.Slug),
-				("$en", name), ("$ru", tag.Labels["ru"]), ("$ja", tag.Labels["ja"]), ("$existing", existing));
+				("$en", name), ("$ru", tag.Labels.GetValueOrDefault("ru")), ("$ja", tag.Labels.GetValueOrDefault("ja")), ("$existing", existing));
 			foreach (var (language, list) in tag.Aliases)
 				foreach (string text in list)
 					Execute(connection, "INSERT OR IGNORE INTO vocab_aliases(tag, language, text) VALUES ($tag, $language, $text)",
@@ -150,19 +157,87 @@ internal static class VocabDb
 	/// <summary>
 	/// Stops a step that writes tags to the site unless vocabulary.yaml is approved as it is now.
 	/// </summary>
+	/// <returns>The hash of the approved file.</returns>
 	/// <exception cref="WorkspaceException">No approval, or the file changed after it.</exception>
-	public static void RequireApproved(SqliteConnection connection, string vocabularyPath)
+	public static string RequireApproved(SqliteConnection connection, string vocabularyPath)
 	{
 		Ensure(connection);
 		string? approved = ApprovedSha256(connection);
 		if (approved is null)
 			throw new WorkspaceException("The vocabulary is not approved. Run haru-tags review, then haru-tags review --approve.");
 
-		string current = File.Exists(vocabularyPath)
-			? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(vocabularyPath))).ToLowerInvariant()
-			: "";
-		if (current != approved)
-			throw new WorkspaceException($"{vocabularyPath} changed after the approval. Run haru-tags review --approve again.");
+		if (FileSha256(vocabularyPath) != approved)
+			throw new WorkspaceException($"{vocabularyPath} changed after the approval. Run haru-data review --approve again.");
+		return approved;
+	}
+
+	/// <summary>SHA-256 of a file, or "" when it does not exist.</summary>
+	public static string FileSha256(string path)
+		=> File.Exists(path) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant() : "";
+
+	/// <summary>Translations made for an approved vocabulary, and the hash of translations.yaml once approved.</summary>
+	public sealed record TranslationState(string VocabularySha256, string? FileSha256);
+
+	public static TranslationState? ReadTranslationState(SqliteConnection connection)
+	{
+		using var command = connection.CreateCommand();
+		command.CommandText = "SELECT vocabulary_sha256, file_sha256 FROM vocab_translations WHERE id = 1";
+		using var reader = command.ExecuteReader();
+		return reader.Read() ? new TranslationState(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1)) : null;
+	}
+
+	/// <summary>
+	/// Stores the labels and aliases of the new tags and the state of their review: made for
+	/// <paramref name="vocabularySha256"/>, approved when <paramref name="fileSha256"/> is set.
+	/// </summary>
+	public static void SaveTranslations(SqliteConnection connection, IEnumerable<VocabularyCheck.Tag> tags,
+		string vocabularySha256, string? fileSha256)
+	{
+		using var transaction = connection.BeginTransaction();
+		foreach (var tag in tags)
+		{
+			string? name;
+			using (var find = connection.CreateCommand())
+			{
+				find.CommandText = "SELECT tag FROM vocab_tags WHERE slug = $slug";
+				find.Parameters.AddWithValue("$slug", tag.Slug);
+				name = find.ExecuteScalar() as string;
+			}
+			if (name is null)
+				continue;
+
+			Execute(connection, "UPDATE vocab_tags SET label_en = $en, label_ru = $ru, label_ja = $ja WHERE tag = $tag",
+				("$tag", name), ("$en", tag.Labels.GetValueOrDefault("en")), ("$ru", tag.Labels.GetValueOrDefault("ru")), ("$ja", tag.Labels.GetValueOrDefault("ja")));
+			Execute(connection, "DELETE FROM vocab_aliases WHERE tag = $tag", ("$tag", name));
+			foreach (var (language, list) in tag.Aliases)
+				foreach (string text in list)
+					Execute(connection, "INSERT OR IGNORE INTO vocab_aliases(tag, language, text) VALUES ($tag, $language, $text)",
+						("$tag", name), ("$language", language), ("$text", text));
+		}
+
+		Execute(connection, """
+			INSERT INTO vocab_translations(id, vocabulary_sha256, file_sha256, approved_at) VALUES (1, $vocabulary, $file, $at)
+			ON CONFLICT(id) DO UPDATE SET vocabulary_sha256 = excluded.vocabulary_sha256, file_sha256 = excluded.file_sha256, approved_at = excluded.approved_at
+			""",
+			("$vocabulary", vocabularySha256), ("$file", fileSha256), ("$at", fileSha256 is null ? null : DateTimeOffset.UtcNow.ToString("O")));
+		transaction.Commit();
+	}
+
+	/// <summary>
+	/// Stops push-tags unless the vocabulary and the translations of its new tags are approved as
+	/// the files are now.
+	/// </summary>
+	/// <exception cref="WorkspaceException">Something is not approved or changed after the approval.</exception>
+	public static void RequireTranslationsApproved(SqliteConnection connection, string vocabularyPath, string translationsPath)
+	{
+		string vocabulary = RequireApproved(connection, vocabularyPath);
+		var state = ReadTranslationState(connection);
+		if (state is null || state.VocabularySha256 != vocabulary)
+			throw new WorkspaceException("The new tags are not translated yet. Run haru-data run (or haru-tags translate).");
+		if (state.FileSha256 is null)
+			throw new WorkspaceException($"{translationsPath} waits for review. Fix it, then run haru-data review --approve.");
+		if (FileSha256(translationsPath) != state.FileSha256)
+			throw new WorkspaceException($"{translationsPath} changed after the approval. Run haru-data review --approve again.");
 	}
 
 	/// <summary>The approved tags with their labels, aliases and the files that get them.</summary>
@@ -180,7 +255,7 @@ internal static class VocabDb
 			{
 				string name = reader.GetString(0);
 				tags[name] = new ApprovedTag(reader.GetString(1),
-					new Dictionary<string, string> { ["en"] = reader.GetString(2), ["ru"] = reader.GetString(3), ["ja"] = reader.GetString(4) },
+					Labels(reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4)),
 					[], reader.IsDBNull(5) ? null : (int)reader.GetInt64(5), new HashSet<string>(StringComparer.Ordinal));
 			}
 		}
@@ -211,6 +286,14 @@ internal static class VocabDb
 		return tags.Values.ToList();
 	}
 
+	private static Dictionary<string, string> Labels(string en, string? ru, string? ja)
+	{
+		var labels = new Dictionary<string, string> { ["en"] = en };
+		if (ru is not null) labels["ru"] = ru;
+		if (ja is not null) labels["ja"] = ja;
+		return labels;
+	}
+
 	private static void Execute(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
 	{
 		using var command = connection.CreateCommand();
@@ -222,7 +305,7 @@ internal static class VocabDb
 }
 
 /// <summary>A tag of the approved vocabulary, as the steps that write to the site see it.</summary>
-/// <param name="Labels">Main label per language: en, ru, ja.</param>
+/// <param name="Labels">Main label per language: en, and ru and ja once translated (tags the site has already are not).</param>
 /// <param name="ExistingId">Id of the tag on the site, when the vocab step matched one.</param>
 /// <param name="Keys">Files that get the tag.</param>
 internal sealed record ApprovedTag(string Slug, Dictionary<string, string> Labels, List<TagText> Aliases, int? ExistingId, HashSet<string> Keys);

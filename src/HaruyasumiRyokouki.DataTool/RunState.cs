@@ -55,7 +55,10 @@ internal static class RunState
 	{
 		// New machine tags need a new vocabulary.
 		"vocab" => Hash(connection, "SELECT DISTINCT r.tag FROM raw_tags r JOIN media m ON m.key = r.key WHERE m.missing = 0 ORDER BY 1"),
-		"push-tags" => Approval(connection),
+		// A new approved vocabulary.
+		"translate" => Approval(connection),
+		// A new vocabulary or new approved translations.
+		"push-tags" => Approval(connection) + Hash(connection, "SELECT vocabulary_sha256, file_sha256 FROM vocab_translations"),
 		// New files of the source folder.
 		"upload" or "sync" => Hash(connection, "SELECT key FROM media WHERE missing = 0 ORDER BY 1"),
 		// A new vocabulary or new files on the site.

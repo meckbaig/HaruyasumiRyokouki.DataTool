@@ -8,8 +8,9 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 
 /// <summary>
-/// vocabulary.yaml: the vocabulary for a person to review and edit. One tag per entry, short
-/// lists on one line, the problems the checks found as comments at the top.
+/// vocabulary.yaml: the English vocabulary for a person to review and edit, before anything is
+/// translated. One tag per entry, short lists on one line, the problems the checks found as
+/// comments at the top.
 /// </summary>
 internal sealed class VocabularyFile
 {
@@ -21,10 +22,8 @@ internal sealed class VocabularyFile
 	{
 		public string Slug { get; set; } = "";
 		public string En { get; set; } = "";
-		public string Ru { get; set; } = "";
-		public string Ja { get; set; } = "";
+		public List<string> Aliases { get; set; } = [];
 		public string Kind { get; set; } = "tag";
-		public Dictionary<string, List<string>> Aliases { get; set; } = [];
 		public List<string> Sources { get; set; } = [];
 		public int Photos { get; set; }
 		public bool Existing { get; set; }
@@ -40,15 +39,21 @@ internal sealed class VocabularyFile
 	}
 
 	private const string Header = """
-		# Tag vocabulary for review.
+		# Tag vocabulary for review, in English. The translations come after the approval and only
+		# for the tags that are left, so deleting a tag here costs nothing.
 		#
-		# Every entry under "tags" becomes a tag on the site. You can change labels and aliases,
-		# delete an entry, move "sources" from one tag to another, or move an entry from "dropped"
-		# back to "tags" (give it slug, en, ru and ja). "sources" are the machine tags of the photos:
-		# a photo gets the tag if it has any of them. "existing: true" means the tag is already on
-		# the site and will not be created again.
+		# Every entry under "tags" becomes a tag on the site:
+		#   slug     the tag's id on the site: lowercase Latin letters, digits and _
+		#   en       the English name visitors see
+		#   aliases  other English words a visitor may search for
+		#   sources  the machine tags of the photos: a photo gets the tag if it has any of them
+		#   photos   how many photos get it
+		#   existing true: the site has this tag already, it is not created again
 		#
-		# Check the file with 'haru-tags review --check', accept it with 'haru-tags review --approve'.
+		# Change names and aliases, delete an entry, move sources from one tag to another, or move an
+		# entry from "dropped" back to "tags" (give it slug and en).
+		#
+		# Check the file with 'haru-data review --check', approve it with 'haru-data review --approve'.
 		""";
 
 	public static VocabularyFile From(IEnumerable<VocabTag> tags) => new()
@@ -57,10 +62,8 @@ internal sealed class VocabularyFile
 		{
 			Slug = t.Slug,
 			En = t.Labels.GetValueOrDefault("en", t.Name),
-			Ru = t.Labels.GetValueOrDefault("ru", ""),
-			Ja = t.Labels.GetValueOrDefault("ja", ""),
+			Aliases = t.Aliases.GetValueOrDefault("en") ?? [],
 			Kind = t.Kind,
-			Aliases = Translator.Languages.ToDictionary(l => l, l => t.Aliases.GetValueOrDefault(l) ?? []),
 			Sources = t.RawTags.Order(StringComparer.Ordinal).ToList(),
 			Photos = t.Keys.Count,
 			Existing = t.ExistingId is not null
@@ -74,21 +77,74 @@ internal sealed class VocabularyFile
 		}).ToList()
 	};
 
-	public void Write(string path, IEnumerable<Checks.Problem> problems)
+	public void Write(string path, IEnumerable<string> problems) => YamlText.Write(path, Header, problems, this);
+
+	public static VocabularyFile Read(string path) => YamlText.Deserializer.Deserialize<VocabularyFile>(File.ReadAllText(path)) ?? new VocabularyFile();
+}
+
+/// <summary>
+/// translations.yaml: labels and aliases in every language of the new tags of the approved
+/// vocabulary, for a review when the checks found problems.
+/// </summary>
+internal sealed class TranslationsFile
+{
+	public List<Entry> Tags { get; set; } = [];
+
+	public sealed class Entry
 	{
-		var text = new StringBuilder(Header).Append('\n');
+		public string Slug { get; set; } = "";
+		public string En { get; set; } = "";
+		public string Ru { get; set; } = "";
+		public string Ja { get; set; } = "";
+		public Dictionary<string, List<string>> Aliases { get; set; } = [];
+	}
+
+	private const string Header = """
+		# Translations of the new tags, made by the site's AI. Tags the site has already are not here.
+		#
+		#   en, ru, ja   the name visitors see in each language
+		#   aliases      other words a visitor may search for, per language
+		#
+		# Fix the translations and aliases. Tags are not added or deleted here: that is done in
+		# vocabulary.yaml, and editing it starts the translations again.
+		#
+		# Check the file with 'haru-data review --check', approve it with 'haru-data review --approve'.
+		""";
+
+	public static TranslationsFile From(IEnumerable<TranslatedTag> tags) => new()
+	{
+		Tags = tags.Select(t => new Entry
+		{
+			Slug = t.Slug,
+			En = t.Labels.GetValueOrDefault("en", ""),
+			Ru = t.Labels.GetValueOrDefault("ru", ""),
+			Ja = t.Labels.GetValueOrDefault("ja", ""),
+			Aliases = Translator.Languages.ToDictionary(l => l, l => t.Aliases.GetValueOrDefault(l) ?? [])
+		}).ToList()
+	};
+
+	/// <summary>The text of the file, with the problems as comments at the top.</summary>
+	public string Render(IEnumerable<string> problems) => YamlText.Render(Header, problems, this);
+}
+
+/// <summary>Writing of the review files: header, problems as comments, short lists on one line.</summary>
+internal static class YamlText
+{
+	public static void Write(string path, string header, IEnumerable<string> problems, object content)
+		=> File.WriteAllText(path, Render(header, problems, content), new UTF8Encoding(false));
+
+	public static string Render(string header, IEnumerable<string> problems, object content)
+	{
+		var text = new StringBuilder(header).Append('\n');
 		var list = problems.ToList();
 		if (list.Count > 0)
 		{
 			text.Append("#\n# Problems to look at:\n");
-			foreach (var problem in list)
-				text.Append("#   ").Append(problem.Tag is null ? "" : $"{problem.Tag}: ").Append(problem.Message.Replace('\n', ' ')).Append('\n');
+			foreach (string problem in list)
+				text.Append("#   ").Append(problem.Replace('\n', ' ')).Append('\n');
 		}
-		text.Append('\n').Append(Serializer.Serialize(this));
-		File.WriteAllText(path, text.ToString(), new UTF8Encoding(false));
+		return text.Append('\n').Append(Serializer.Serialize(content)).ToString();
 	}
-
-	public static VocabularyFile Read(string path) => Deserializer.Deserialize<VocabularyFile>(File.ReadAllText(path)) ?? new VocabularyFile();
 
 	private static readonly ISerializer Serializer = new SerializerBuilder()
 		.WithNamingConvention(UnderscoredNamingConvention.Instance)

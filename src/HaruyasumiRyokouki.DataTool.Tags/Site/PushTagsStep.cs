@@ -8,17 +8,17 @@ namespace HaruyasumiRyokouki.DataTool.Tags.Site;
 internal delegate bool Confirm(string action, IReadOnlyList<string> targets);
 
 /// <summary>
-/// Step push-tags: creates the tags of the approved vocabulary that the site does not have and
-/// stores the id of every tag. A tag the site already has, by the id the vocab step matched or
-/// by slug, is not created again, so a second run creates nothing. A tag the site refuses is an
-/// error of the step, but the other tags are still created.
+/// Step push-tags: creates the tags of the approved vocabulary that the site does not have, with
+/// their approved translations, and stores the id of every tag. A tag the site already has, by the
+/// id the vocab step matched or by slug, is not created again, so a second run creates nothing. A
+/// tag the site refuses is an error of the step, but the other tags are still created.
 /// </summary>
-internal sealed class PushTagsStep(BackendApi api, string vocabularyPath, Confirm confirm, TextWriter output)
+internal sealed class PushTagsStep(BackendApi api, string vocabularyPath, string translationsPath, Confirm confirm, TextWriter output)
 {
 	/// <summary>Returns the report status, or null to let the errors decide.</summary>
 	public async Task<string?> RunAsync(SqliteConnection connection, StepReport report, CancellationToken cancellationToken)
 	{
-		VocabDb.RequireApproved(connection, vocabularyPath);
+		VocabDb.RequireTranslationsApproved(connection, vocabularyPath, translationsPath);
 		SiteDb.Ensure(connection);
 		var tags = VocabDb.ReadApproved(connection);
 

@@ -5,9 +5,10 @@ using System.Text.Json;
 namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 
 /// <summary>
-/// Labels and aliases in en, ru and ja for the kept tags. A tag the site already has takes its
-/// labels from there; the others go to the backend's /v1/tags/completion, the same prompt the
-/// admin uses for a single tag, so the vocabulary reads like the rest of the site.
+/// Labels and aliases in en, ru and ja. The vocabulary step only matches tags with the site and
+/// sets the English side; the translate step sends the approved new tags to the backend's
+/// /v1/tags/completion, the same prompt the admin uses for a single tag, so the labels read like
+/// the rest of the site. Tags a person deleted in the review are never translated.
 /// </summary>
 internal sealed class Translator(BackendApi api, string cacheDir, int concurrency, TextWriter output)
 {
@@ -26,54 +27,59 @@ internal sealed class Translator(BackendApi api, string cacheDir, int concurrenc
 				byText.TryAdd(text.Text.Trim(), tag);
 
 		foreach (var tag in tags.Where(t => t.Keep))
-		{
-			if (!bySlug.TryGetValue(tag.Slug, out var match) && !byText.TryGetValue(tag.Name, out match))
-				continue;
-
-			tag.ExistingId = match.Id;
-			Fill(tag, match.Translations, match.Aliases);
-		}
+			if (bySlug.TryGetValue(tag.Slug, out var match) || byText.TryGetValue(tag.Name, out match))
+				tag.ExistingId = match.Id;
 	}
 
-	/// <summary>Asks the backend for every kept tag that is not on the site yet; answers are cached.</summary>
-	public async Task TranslateAsync(IReadOnlyCollection<VocabTag> tags, List<string> errors, CancellationToken cancellationToken)
+	/// <summary>
+	/// The English side of a tag for the review: the model's name is the label, the variants merged
+	/// into the tag ("sakura" for "cherry blossom") are search aliases.
+	/// </summary>
+	public static void SetEnglish(VocabTag tag)
 	{
-		var todo = tags.Where(t => t.Keep && t.ExistingId is null).ToList();
-		int done = 0;
-		output.WriteLine($"vocab: translating {todo.Count} tags through {api.BaseAddress}v1/tags/completion");
+		tag.Labels.Clear();
+		tag.Aliases.Clear();
+		tag.Labels["en"] = tag.Name;
+		tag.Aliases["en"] = tag.Entries.Select(e => e.Text)
+			.Where(text => text != tag.Name && text.Any(char.IsAsciiLetter))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Order(StringComparer.Ordinal)
+			.ToList();
+	}
 
-		await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = concurrency, CancellationToken = cancellationToken },
+	/// <summary>Asks the backend for every tag; answers are cached. Failures are listed in <paramref name="errors"/>.</summary>
+	public async Task TranslateAsync(IReadOnlyCollection<TranslatedTag> tags, List<string> errors, CancellationToken cancellationToken)
+	{
+		int done = 0;
+		output.WriteLine($"translate: {tags.Count} tags through {api.BaseAddress}v1/tags/completion");
+
+		await Parallel.ForEachAsync(tags, new ParallelOptions { MaxDegreeOfParallelism = concurrency, CancellationToken = cancellationToken },
 			async (tag, ct) =>
 			{
 				try
 				{
-					var draft = await CompleteCachedAsync(tag.Name, ct);
+					var draft = await CompleteCachedAsync(tag.Labels["en"], ct);
 					lock (tag)
 						Fill(tag, draft.Translations, draft.Aliases);
 				}
 				catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
 				{
 					lock (errors)
-						errors.Add($"'{tag.Name}': {ex.Message}");
+						errors.Add($"'{tag.Slug}' was not translated: {ex.Message}");
 				}
 
 				int count = Interlocked.Increment(ref done);
-				if (count % 25 == 0 || count == todo.Count)
-					output.WriteLine($"vocab: translated {count}/{todo.Count}");
+				if (count % 25 == 0 || count == tags.Count)
+					output.WriteLine($"translate: {count}/{tags.Count}");
 			});
 	}
 
 	/// <summary>
-	/// The model's English name stays the main English label: it was chosen with the whole
-	/// vocabulary in view. Other English wording of the backend becomes an alias, as do the variants
-	/// merged into the tag ("sakura" for "cherry blossom"). Aliases equal to a label are dropped,
-	/// as the backend would reject them.
+	/// The approved English label stays: a person chose it. Other English wording of the backend
+	/// becomes an alias. Aliases equal to a label are dropped, as the backend would reject them.
 	/// </summary>
-	private static void Fill(VocabTag tag, IEnumerable<TagText>? translations, IEnumerable<TagText>? aliases)
+	private static void Fill(TranslatedTag tag, IEnumerable<TagText>? translations, IEnumerable<TagText>? aliases)
 	{
-		tag.Labels.Clear();
-		tag.Aliases.Clear();
-		tag.Labels["en"] = tag.Name;
 		foreach (var text in translations ?? [])
 		{
 			string language = text.LanguageCode.ToLowerInvariant();
@@ -86,20 +92,17 @@ internal sealed class Translator(BackendApi api, string cacheDir, int concurrenc
 
 		foreach (var text in aliases ?? [])
 			AddAlias(tag, text.LanguageCode.ToLowerInvariant(), text.Text.Trim());
-		foreach (var entry in tag.Entries.Where(e => e.Text != tag.Name && e.Text.Any(char.IsAsciiLetter)))
-			AddAlias(tag, "en", entry.Text);
 
 		// An alias may have been added before the label it equals.
-		foreach (var (language, list) in tag.Aliases)
+		foreach (var (_, list) in tag.Aliases)
 			list.RemoveAll(alias => tag.Labels.Values.Contains(alias, StringComparer.OrdinalIgnoreCase));
 	}
 
-	private static void AddAlias(VocabTag tag, string language, string text)
+	private static void AddAlias(TranslatedTag tag, string language, string text)
 	{
 		if (!Languages.Contains(language) || text.Length == 0 || tag.Labels.Values.Contains(text, StringComparer.OrdinalIgnoreCase))
 			return;
-		if (!tag.Aliases.TryGetValue(language, out var list))
-			tag.Aliases[language] = list = [];
+		var list = tag.Aliases[language];
 		if (!list.Contains(text, StringComparer.OrdinalIgnoreCase))
 			list.Add(text);
 	}
@@ -116,4 +119,25 @@ internal sealed class Translator(BackendApi api, string cacheDir, int concurrenc
 		await File.WriteAllTextAsync(path, JsonSerializer.Serialize(draft, BackendApi.Json), cancellationToken);
 		return draft;
 	}
+}
+
+/// <summary>A new tag of the approved vocabulary with its labels and aliases in every language.</summary>
+internal sealed class TranslatedTag
+{
+	public TranslatedTag(string slug, string en, IEnumerable<string> enAliases)
+	{
+		Slug = slug;
+		Labels["en"] = en;
+		foreach (string language in Translator.Languages)
+			Aliases[language] = [];
+		Aliases["en"].AddRange(enAliases);
+	}
+
+	public string Slug { get; }
+
+	/// <summary>Main label per language.</summary>
+	public Dictionary<string, string> Labels { get; } = [];
+
+	/// <summary>Search aliases per language; every language is present.</summary>
+	public Dictionary<string, List<string>> Aliases { get; } = [];
 }

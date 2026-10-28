@@ -55,7 +55,7 @@ namespace HaruyasumiRyokouki.DataTool
 					result.AddError($"unknown step '{name}'; steps: {string.Join(", ", Steps.All.Select(s => s.Name))}");
 			});
 			var yes = new Option<bool>("--yes") { Description = "do not ask before writing to the site or calling the cloud model; targets are still printed" };
-			var noReview = new Option<bool>("--no-review") { Description = "approve vocabulary.yaml as the model wrote it instead of stopping for the review" };
+			var noReview = new Option<bool>("--no-review") { Description = "approve the tag list and the translations as they were made instead of stopping for the review" };
 			var run = new Command("run", "run the steps that are not done, in order; stops at the review, at questions and at errors");
 			run.Arguments.Add(step);
 			run.Options.Add(yes);
@@ -86,9 +86,9 @@ namespace HaruyasumiRyokouki.DataTool
 			}));
 			root.Subcommands.Add(doctor);
 
-			var check = new Option<bool>("--check") { Description = "check the edited vocabulary.yaml, with line numbers" };
-			var approve = new Option<bool>("--approve") { Description = "check vocabulary.yaml and make it the vocabulary written to the site" };
-			var review = new Command("review", "the vocabulary review of haru-tags: summary, --check or --approve");
+			var check = new Option<bool>("--check") { Description = "check the edited file that waits for review, with line numbers" };
+			var approve = new Option<bool>("--approve") { Description = "check the file that waits for review and approve it" };
+			var review = new Command("review", "the file that waits for you (vocabulary.yaml, then translations.yaml): summary, --check or --approve");
 			review.Options.Add(check);
 			review.Options.Add(approve);
 			review.SetAction(parse => Guard(() =>

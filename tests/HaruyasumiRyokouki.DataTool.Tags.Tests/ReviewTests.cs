@@ -21,18 +21,14 @@ public sealed class ReviewTests : IDisposable
 		tags:
 		- slug: shop
 		  en: shop
-		  ru: магазин
-		  ja: 店
+		  aliases: [store]
 		  kind: tag
-		  aliases: {en: [store], ru: [], ja: []}
 		  sources: [shop, store]
 		  photos: 3
 		  existing: false
 		- slug: temple
 		  en: temple
-		  ru: храм
-		  ja: 寺
-		  aliases: {en: [], ru: [], ja: []}
+		  aliases: []
 		  sources: [temple]
 		dropped: []
 		""";
@@ -43,9 +39,9 @@ public sealed class ReviewTests : IDisposable
 		var result = VocabularyCheck.Run(Valid, Known);
 
 		Assert.Empty(result.Issues);
-		Assert.Equal([3, 12], result.Tags.Select(t => t.Line));
+		Assert.Equal([3, 10], result.Tags.Select(t => t.Line));
 		Assert.Equal(["store"], result.Tags[0].Aliases["en"]);
-		Assert.Equal("храм", result.Tags[1].Labels["ru"]);
+		Assert.Equal("temple", result.Tags[1].Labels["en"]);
 	}
 
 	[Fact]
@@ -55,20 +51,17 @@ public sealed class ReviewTests : IDisposable
 			tags:
 			- slug: Shop Tag
 			  en: shop
-			  ru: shop
-			  ja: ""
-			  aliases: {en: [Shop], ru: [], ja: []}
+			  aliases: [Shop, shop2, shop2]
 			  sources: [shop, typo]
 			- slug: temple
 			  en: shop
-			  ru: храм
-			  ja: 寺
 			  sources: [shop]
 			- slug: temple
 			  en: ramen
-			  ru: храм
-			  ja: ラーメン
 			  sources: []
+			- slug: food
+			  en: ""
+			  sources: [food]
 			""";
 
 		var issues = VocabularyCheck.Run(yaml, Known).Issues;
@@ -76,15 +69,14 @@ public sealed class ReviewTests : IDisposable
 		void Has(int line, string text, bool error) =>
 			Assert.Contains(issues, i => i.Line == line && i.Message.Contains(text) && i.IsError == error);
 		Has(2, "lowercase Latin letters", true);
-		Has(2, "no ja label", true);
-		Has(2, "'shop' is used twice", true);          // en and ru labels are the same text
 		Has(2, "en alias 'Shop' equals a label", true);
+		Has(2, "'shop2' is used twice", true);
 		Has(2, "source 'typo' is not a tag", true);
-		Has(8, "en label 'shop' is also used on line 2", true);
-		Has(8, "source 'shop' is also in the tag on line 2", true);
-		Has(13, "slug is also used on line 8", true);
-		Has(13, "ru label 'храм' is also used on line 8", false);
-		Has(13, "no sources", false);
+		Has(6, "en label 'shop' is also used on line 2", true);
+		Has(6, "source 'shop' is also in the tag on line 2", true);
+		Has(9, "slug is also used on line 6", true);
+		Has(9, "no sources", false);
+		Has(12, "no en label", true);
 	}
 
 	[Fact]
@@ -119,5 +111,71 @@ public sealed class ReviewTests : IDisposable
 		var marked = VocabularyCheck.Run(Valid.Replace("existing: false", "existing: true"), Known).Tags;
 		var ex = Assert.Throws<InvalidOperationException>(() => VocabDb.Approve(db, marked, keys, "def"));
 		Assert.Contains("'shop' (line 3)", ex.Message);
+	}
+
+	[Fact]
+	public async Task Translations_come_after_the_approval_and_wait_for_review_only_with_problems()
+	{
+		File.WriteAllText(Path.Combine(_root, Workspace.ConfigName), "");
+		var workspace = Workspace.Open(_root);
+		using var db = WorkDb.Open(workspace);
+		using (var command = db.CreateCommand())
+		{
+			command.CommandText = """
+				CREATE TABLE media (key TEXT PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL,
+				  mtime_ns INTEGER NOT NULL, missing INTEGER NOT NULL DEFAULT 0, frame_status TEXT, frame_error TEXT,
+				  tag_status TEXT NOT NULL DEFAULT 'pending', tag_error TEXT, tag_description TEXT,
+				  embed_status TEXT NOT NULL DEFAULT 'pending', embed_error TEXT);
+				CREATE TABLE raw_tags (key TEXT NOT NULL, tag TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'tag', evidence TEXT, PRIMARY KEY (key, tag));
+				CREATE TABLE embeddings (key TEXT PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vector BLOB NOT NULL);
+				INSERT INTO schema_versions(owner, version) VALUES ('analysis', 3);
+				INSERT INTO media(key, path, type, size, mtime_ns) VALUES ('a', 'a.jpg', 'image', 1, 1), ('d', 'd.jpg', 'image', 1, 1);
+				INSERT INTO raw_tags(key, tag) VALUES ('a', 'shop'), ('a', 'store'), ('d', 'temple');
+				""";
+			command.ExecuteNonQuery();
+		}
+		File.WriteAllText(workspace.VocabularyPath, Valid);
+		var review = new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, TextWriter.Null);
+		string Review(ReviewStep.Mode mode) => review.Run(db, mode, new StepReport("review"));
+
+		// Both tags get the same Russian label: a problem the review has to see.
+		var server = new TranslationTests.CompletionServer(t => TranslationTests.Draft(t, "здание", t == "shop" ? "店" : "寺"));
+		using var api = new BackendApi(new Uri("http://backend.test"), "u", "p", server);
+		var translate = new TranslateStep(new Translator(api, workspace.LlmCacheDir, 2, TextWriter.Null),
+			workspace.VocabularyPath, workspace.TranslationsPath, TextWriter.Null);
+		Task<string?> Translate() => translate.RunAsync(db, new StepReport("translate"), default);
+
+		Assert.Equal("needs_review", Review(ReviewStep.Mode.Summary));
+		await Assert.ThrowsAsync<WorkspaceException>(Translate);   // nothing is translated before the approval
+		Assert.Empty(server.Asked);
+
+		Assert.Equal("ok", Review(ReviewStep.Mode.Approve));
+		Assert.Equal("ok", Review(ReviewStep.Mode.Summary));
+		Assert.Equal("needs_review", await Translate());
+		Assert.Contains("ru label 'здание' is also used", File.ReadAllText(workspace.TranslationsPath));
+		Assert.Throws<WorkspaceException>(() => VocabDb.RequireTranslationsApproved(db, workspace.VocabularyPath, workspace.TranslationsPath));
+
+		// The waiting file is not overwritten by the step, and review now works on it.
+		string text = File.ReadAllText(workspace.TranslationsPath);
+		int at = text.IndexOf("здание", text.IndexOf("slug: temple", StringComparison.Ordinal), StringComparison.Ordinal);
+		File.WriteAllText(workspace.TranslationsPath, text[..at] + "храм" + text[(at + "здание".Length)..]);
+		Assert.Equal("needs_review", await Translate());
+		Assert.Contains("ru: храм", File.ReadAllText(workspace.TranslationsPath));
+		Assert.Equal("needs_review", Review(ReviewStep.Mode.Summary));
+		Assert.Equal("ok", Review(ReviewStep.Mode.Approve));
+
+		VocabDb.RequireTranslationsApproved(db, workspace.VocabularyPath, workspace.TranslationsPath);
+		Assert.Null(await Translate());
+		var temple = VocabDb.ReadApproved(db).Single(t => t.Slug == "temple");
+		Assert.Equal("храм", temple.Labels["ru"]);
+		Assert.Equal(["shop", "temple"], server.Asked.Order());
+
+		// A new approval of the vocabulary starts the translations again; the answers come from the cache.
+		File.AppendAllText(workspace.VocabularyPath, "\n");
+		Assert.Equal("needs_review", Review(ReviewStep.Mode.Summary));
+		Assert.Equal("ok", Review(ReviewStep.Mode.Approve));
+		Assert.Throws<WorkspaceException>(() => VocabDb.RequireTranslationsApproved(db, workspace.VocabularyPath, workspace.TranslationsPath));
+		Assert.Equal("needs_review", await Translate());
+		Assert.Equal(2, server.Asked.Count);
 	}
 }

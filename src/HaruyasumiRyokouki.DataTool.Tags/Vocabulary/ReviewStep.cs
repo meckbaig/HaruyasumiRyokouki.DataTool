@@ -1,16 +1,16 @@
-using System.Security.Cryptography;
 using HaruyasumiRyokouki.DataTool.Common;
 using Microsoft.Data.Sqlite;
 
 namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 
 /// <summary>
-/// Step review: the person's part of the vocabulary. Without options it shows a summary and whether
-/// the current vocabulary.yaml is approved; --check checks the edited file with line numbers;
-/// --approve checks it and makes it the vocabulary the next steps write to the site. Editing the
-/// file after the approval takes the approval back: the hash of the approved file is stored.
+/// Step review: the person's part. It works on whatever waits for a person: vocabulary.yaml until
+/// it is approved, then translations.yaml when the translate step found problems in it. Without
+/// options it shows a summary and whether the file is approved; --check checks the edited file with
+/// line numbers; --approve checks it and makes it what the next steps use. Editing an approved
+/// file takes the approval back: the hash of the approved file is stored.
 /// </summary>
-internal sealed class ReviewStep(string vocabularyPath, TextWriter output)
+internal sealed class ReviewStep(string vocabularyPath, string translationsPath, TextWriter output)
 {
 	public enum Mode { Summary, Check, Approve }
 
@@ -20,21 +20,39 @@ internal sealed class ReviewStep(string vocabularyPath, TextWriter output)
 		AnalysisData.Require(connection);
 		VocabDb.Ensure(connection);
 		if (!File.Exists(vocabularyPath))
-			throw new WorkspaceException($"{vocabularyPath} not found. Run haru-tags vocab first.");
+			throw new WorkspaceException($"{vocabularyPath} not found. Run haru-data run (the vocab step) first.");
 
+		string vocabulary = VocabDb.FileSha256(vocabularyPath);
+		bool vocabularyApproved = VocabDb.ApprovedSha256(connection) == vocabulary;
+		var translations = VocabDb.ReadTranslationState(connection);
+		bool translated = vocabularyApproved && translations?.VocabularySha256 == vocabulary && File.Exists(translationsPath);
+
+		// Checking or approving the vocabulary again is always possible until its translations exist.
+		if (!vocabularyApproved || (!translated && mode != Mode.Summary))
+			return RunVocabulary(connection, mode, report);
+
+		if (!translated)
+		{
+			report.Message = "vocabulary.yaml is approved; the translate step translates the new tags next (haru-data run)";
+			output.WriteLine(report.Message);
+			return "ok";
+		}
+
+		return RunTranslations(connection, mode, report, vocabulary, translations!);
+	}
+
+	private string RunVocabulary(SqliteConnection connection, Mode mode, StepReport report)
+	{
 		var rawTags = AnalysisData.ReadRawTags(connection);
 		var keysBySource = rawTags.GroupBy(r => r.Tag, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.Select(r => r.Key).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
 
 		byte[] bytes = File.ReadAllBytes(vocabularyPath);
-		string sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 		var result = VocabularyCheck.Run(new System.Text.UTF8Encoding(false).GetString(bytes), keysBySource.Keys.ToHashSet(StringComparer.Ordinal));
 
+		output.WriteLine($"== {vocabularyPath}");
 		PrintSummary(result, rawTags, report);
-		foreach (var issue in result.Issues)
-			output.WriteLine($"{(issue.IsError ? "error" : "warning")}: line {issue.Line}{(issue.Slug is null ? "" : $" ({issue.Slug})")}: {issue.Message}");
-		report.Count("errors in file", result.Issues.Count(i => i.IsError));
-		report.Count("warnings in file", result.Issues.Count(i => !i.IsError));
+		PrintIssues(result, report);
 
 		if (mode == Mode.Approve)
 		{
@@ -43,8 +61,8 @@ internal sealed class ReviewStep(string vocabularyPath, TextWriter output)
 				report.Message = "not approved: fix the errors in vocabulary.yaml";
 				return "error";
 			}
-			VocabDb.Approve(connection, result.Tags, keysBySource, sha256);
-			report.Message = $"approved {result.Tags.Count} tags";
+			VocabDb.Approve(connection, result.Tags, keysBySource, VocabDb.FileSha256(vocabularyPath));
+			report.Message = $"approved {result.Tags.Count} tags; the new ones are translated next (haru-data run)";
 			output.WriteLine(report.Message);
 			return "ok";
 		}
@@ -55,12 +73,54 @@ internal sealed class ReviewStep(string vocabularyPath, TextWriter output)
 			return result.HasErrors ? "error" : "ok";
 		}
 
-		bool approved = VocabDb.ApprovedSha256(connection) == sha256;
+		report.Message = "vocabulary.yaml waits for review: edit it if needed, then 'haru-data review --approve'";
+		output.WriteLine(report.Message);
+		return "needs_review";
+	}
+
+	private string RunTranslations(SqliteConnection connection, Mode mode, StepReport report, string vocabulary, VocabDb.TranslationState state)
+	{
+		var newSlugs = VocabDb.ReadApproved(connection).Where(t => t.ExistingId is null).Select(t => t.Slug).ToList();
+		var result = VocabularyCheck.RunTranslations(File.ReadAllText(translationsPath), newSlugs);
+
+		output.WriteLine($"== {translationsPath}");
+		report.Count("new tags", newSlugs.Count);
+		output.WriteLine($"{newSlugs.Count} new tags with translations");
+		PrintIssues(result, report);
+
+		if (mode == Mode.Approve)
+		{
+			if (result.HasErrors)
+			{
+				report.Message = "not approved: fix the errors in translations.yaml";
+				return "error";
+			}
+			VocabDb.SaveTranslations(connection, result.Tags, vocabulary, VocabDb.FileSha256(translationsPath));
+			report.Message = "approved the translations; the next steps write to the site (haru-data run)";
+			output.WriteLine(report.Message);
+			return "ok";
+		}
+
+		if (mode == Mode.Check)
+		{
+			report.Message = result.HasErrors ? "translations.yaml has errors" : "translations.yaml is valid";
+			return result.HasErrors ? "error" : "ok";
+		}
+
+		bool approved = state.FileSha256 == VocabDb.FileSha256(translationsPath);
 		report.Message = approved
-			? "approved; the next steps can write to the site"
-			: "waiting for review: edit vocabulary.yaml if needed, then run haru-tags review --approve";
+			? "vocabulary.yaml and translations.yaml are approved; the next steps can write to the site"
+			: "translations.yaml waits for review: fix it, then 'haru-data review --approve'";
 		output.WriteLine(report.Message);
 		return approved ? "ok" : "needs_review";
+	}
+
+	private void PrintIssues(VocabularyCheck.Result result, StepReport report)
+	{
+		foreach (var issue in result.Issues)
+			output.WriteLine($"{(issue.IsError ? "error" : "warning")}: line {issue.Line}{(issue.Slug is null ? "" : $" ({issue.Slug})")}: {issue.Message}");
+		report.Count("errors in file", result.Issues.Count(i => i.IsError));
+		report.Count("warnings in file", result.Issues.Count(i => !i.IsError));
 	}
 
 	private void PrintSummary(VocabularyCheck.Result result, IReadOnlyList<RawTag> rawTags, StepReport report)

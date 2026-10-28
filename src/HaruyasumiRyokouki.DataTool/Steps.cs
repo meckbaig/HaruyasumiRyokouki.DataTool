@@ -12,8 +12,11 @@ internal enum StepKind
 	/// <summary>Paid calls to a cloud model; runs only when its input changed, after an estimate.</summary>
 	Cloud,
 
-	/// <summary>The vocabulary review: stops the run until a person approves.</summary>
+	/// <summary>The review: stops the run until a person approves what waits (the vocabulary, then the translations).</summary>
 	Review,
+
+	/// <summary>Runs only when its input changed; stops for a person when it finds problems.</summary>
+	OnChange,
 
 	/// <summary>Writes to the site; runs only when its input changed and asks before writing.</summary>
 	Site
@@ -32,7 +35,8 @@ internal static class Steps
 		new("tag", App.Analysis, StepKind.Local, "machine tags of every file from the vision model"),
 		new("embed", App.Analysis, StepKind.Local, "SigLIP image vectors"),
 		new("vocab", App.Tags, StepKind.Cloud, "vocabulary from the machine tags with a cloud model"),
-		new("review", App.Tags, StepKind.Review, "a person checks vocabulary.yaml and approves it"),
+		new("review", App.Tags, StepKind.Review, "a person checks the tag list and approves it"),
+		new("translate", App.Tags, StepKind.OnChange, "translate the new tags through the site's AI and check them"),
 		new("push-tags", App.Tags, StepKind.Site, "create the new tags on the site"),
 		new("upload", App.Tags, StepKind.Site, "copy the files into the site's storage"),
 		new("sync", App.Tags, StepKind.Site, "let the site import the files, read their ids"),

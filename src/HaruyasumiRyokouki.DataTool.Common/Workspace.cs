@@ -36,6 +36,9 @@ public sealed class Workspace
 	/// <summary>The vocabulary file the user reviews.</summary>
 	public string VocabularyPath => Path.Combine(Root, "vocabulary.yaml");
 
+	/// <summary>Translations of the new tags for review (haru-tags translate).</summary>
+	public string TranslationsPath => Path.Combine(Root, "translations.yaml");
+
 	/// <summary>
 	/// Opens the workspace and loads its <c>.env</c> into the process environment
 	/// (variables that are already set win).
