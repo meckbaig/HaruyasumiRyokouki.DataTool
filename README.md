@@ -17,7 +17,7 @@ All state of a trip lives in one workspace folder: settings, `work.sqlite` with 
 - **ffmpeg** in `PATH`, for the frames of videos.
 - **A vision model server** with an OpenAI-compatible API for tagging: [LM Studio](https://lmstudio.ai/) with `qwen3-vl-8b-instruct` by default (about 6 GB of video memory), or a cloud API. See [Choosing models](#choosing-models).
 - **A cloud model** for the vocabulary: a DeepSeek API key by default.
-- **Access to the site**: the API address and the admin login, the media storage (WebDAV login, or the folder of a local storage) and a connection string to its Postgres that may read `media_files` and write `media_embeddings`.
+- **Access to the site**: the API address and the admin login, write access to the folder the site imports media from (a local or network folder, or Nextcloud over WebDAV if the backend uses that) and a connection string to its Postgres that may read `media_files` and write `media_embeddings`.
 
 ## Installation
 
@@ -39,7 +39,7 @@ Three folders take part, and they are easy to mix up:
 |---|---|---|
 | **Source folder** | The photos and videos of the trip on your computer, collected by you. The tool only reads them and never changes them. | `--source` of `haru-data init`, then `source` in `haru-data.toml` |
 | **Workspace** | The state of one trip: `haru-data.toml` (settings), `.env` (secrets), `work.sqlite` (results of every step), `vocabulary.yaml` (the vocabulary for the review), `reports/` (a report per step), `frames/` (frames of videos), `cache/llm/` (answers of the cloud model). Created by `haru-data init`; `run`, `status` and the other commands work in it. Keep it until the trip is on the site, and for adding photos later. | the argument of `init`, then `--workspace` or the current folder |
-| **Site storage** | The folder the backend imports media from: a Nextcloud folder over WebDAV or a local folder of the server. `upload` copies the files there; the site converts them and keeps them there. | `[storage]` in `haru-data.toml` |
+| **Site storage** | The folder the backend imports new media from (`LocalStorageProvider:Path` of the backend, or a Nextcloud folder if the backend uses WebDAV). The site only imports files that lie there, so `upload` copies the photos there, and `sync` asks the site to import them; the site converts them and keeps them there. | `[storage]` in `haru-data.toml` |
 
 ## Step-by-step guide
 
@@ -81,7 +81,7 @@ The command creates the folder with two files to fill in, then checks your compu
 Open `haru-data.toml` in the workspace. Every line has a comment. Fill in:
 
 - `api` under `[backend]`: the address of the site's API, such as `https://api.example.com`.
-- under `[storage]`: where the site takes new media from. For Nextcloud: `type = "webdav"` and `url` = the address of the media folder. For a local folder of the server: `type = "local"` and `path` = that folder.
+- `path` under `[storage]`: the folder the site takes new media from, the same as `LocalStorageProvider:Path` in the backend settings. If the backend runs on another computer, give the path to that folder as this computer sees it, such as a network share `//server/media`. (Only if the backend keeps media in Nextcloud: `type = "webdav"` and `url` instead, see the comments in the file.)
 
 Open `.env` in the workspace and fill in the passwords:
 
@@ -89,7 +89,7 @@ Open `.env` in the workspace and fill in the passwords:
 |---|---|
 | `DEEPSEEK_API_KEY` | the DeepSeek API key, for building the tag list |
 | `HARU_USER`, `HARU_PASSWORD` | the site's admin login and password |
-| `HARU_STORAGE_USER`, `HARU_STORAGE_PASSWORD` | the Nextcloud login and password (only for `webdav`) |
+| `HARU_STORAGE_USER`, `HARU_STORAGE_PASSWORD` | only for Nextcloud (`type = "webdav"`): its login and password; otherwise leave them out |
 | `HARU_CONNECTION` | the connection to the site's database, like `Host=db.example.com;Port=5432;Database=haru;Username=haru;Password=...` |
 
 Start LM Studio, load the model `qwen3-vl-8b-instruct` and start its server (the "Developer" tab). Then go into the workspace and check everything:

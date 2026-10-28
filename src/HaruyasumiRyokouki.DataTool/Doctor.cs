@@ -63,7 +63,7 @@ internal sealed class Doctor(RepoLayout repo, TextWriter output)
 				Secret("HARU_STORAGE_PASSWORD");
 			}
 			else
-				Check(false, "storage", "[storage] type is not set: webdav or local");
+				Check(false, "storage", "[storage] type is not set: local or webdav");
 			Secret("HARU_CONNECTION");
 		}
 

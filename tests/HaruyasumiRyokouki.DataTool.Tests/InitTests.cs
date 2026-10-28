@@ -27,7 +27,8 @@ public sealed class InitTests : IDisposable
 		Assert.Equal(200000, workspace.GetInt("providers.deepseek.max_tokens"));
 		// No real address by default: the steps that write stop until one is set.
 		Assert.Null(workspace.GetString("backend.api"));
-		Assert.Null(workspace.GetString("storage.url"));
+		Assert.Equal("local", workspace.GetString("storage.type"));
+		Assert.Null(workspace.GetString("storage.path"));
 		Assert.True(File.Exists(workspace.DbPath));
 		Assert.Contains("HARU_CONNECTION=", File.ReadAllText(Path.Combine(folder, ".env")));
 

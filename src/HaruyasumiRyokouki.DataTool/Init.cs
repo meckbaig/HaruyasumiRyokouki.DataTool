@@ -72,11 +72,16 @@ internal static class Init
 		[backend]
 		api = ""                   # address of the site's API, or HARU_API; no default on purpose
 
-		[storage]                  # the folder the site imports media from (backend MediaStorage)
-		type = "webdav"            # webdav | local
-		url = ""                   # webdav: the media folder, or HARU_STORAGE_URL
-		# path = ""                # local: the backend's LocalStorageProvider:Path
-		concurrency = 4            # parallel uploads
+		# The folder the site imports new media from (backend MediaStorage); upload copies the
+		# photos there. The same folder as the backend's LocalStorageProvider:Path, as seen from
+		# this computer: a local path, or a network share of the server.
+		[storage]
+		type = "local"
+		path = ""
+		concurrency = 4            # parallel copies
+		# If the backend keeps media in Nextcloud instead (MediaStorage:Provider = WebDav):
+		# type = "webdav"
+		# url = ""                 # the media folder, or HARU_STORAGE_URL; login and password in .env
 		""";
 
 	public const string EnvTemplate = """
@@ -85,9 +90,9 @@ internal static class Init
 		# The site's admin (Basic auth)
 		HARU_USER=
 		HARU_PASSWORD=
-		# WebDAV storage
-		HARU_STORAGE_USER=
-		HARU_STORAGE_PASSWORD=
+		# Only for [storage] type = "webdav" (Nextcloud)
+		# HARU_STORAGE_USER=
+		# HARU_STORAGE_PASSWORD=
 		# The site's Postgres: reading media_files, writing media_embeddings,
 		# like Host=db.example;Port=5432;Database=haru;Username=haru;Password=...
 		HARU_CONNECTION=

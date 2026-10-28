@@ -24,16 +24,17 @@ The workspace's `haru-data.toml` names the backend; credentials only come from t
 api = "https://haru.example"   # or HARU_API; there is no default, so nothing is written to a server nobody chose
 
 [storage]                      # where the site imports media from: the backend's MediaStorage
-type = "webdav"                # webdav | local
-url = "https://cloud.example/remote.php/dav/files/user/media/"   # webdav: or HARU_STORAGE_URL
-# path = "D:/Media"            # local: the backend's LocalStorageProvider:Path
+type = "local"                 # local | webdav
+path = "D:/Media"              # local: the backend's LocalStorageProvider:Path, or a network share of it
 concurrency = 4                # parallel uploads
+# type = "webdav"              # if the backend keeps media in Nextcloud
+# url = "https://cloud.example/remote.php/dav/files/user/media/"   # or HARU_STORAGE_URL
 ```
 
 ```
 HARU_USER=admin                # Basic auth of the site's admin
 HARU_PASSWORD=...
-HARU_STORAGE_USER=...          # WebDAV storage
+HARU_STORAGE_USER=...          # only for a WebDAV storage
 HARU_STORAGE_PASSWORD=...
 HARU_CONNECTION=Host=...;Database=...;Username=...;Password=...   # reading media_files, writing media_embeddings
 ```
