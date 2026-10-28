@@ -66,11 +66,13 @@ def run_scan(conn, root, report):
             # The content changed: everything computed from the old file is stale.
             conn.execute(
                 "UPDATE media SET path = ?, type = ?, size = ?, mtime_ns = ?, missing = 0,"
-                " frame_status = ?, frame_error = NULL, embed_status = 'pending', embed_error = NULL"
+                " frame_status = ?, frame_error = NULL, tag_status = 'pending', tag_error = NULL, tag_description = NULL,"
+                " embed_status = 'pending', embed_error = NULL"
                 " WHERE key = ?",
                 (str(path), kind, stat.st_size, stat.st_mtime_ns,
                  db.PENDING if kind == "video" else None, key),
             )
+            conn.execute("DELETE FROM raw_tags WHERE key = ?", (key,))
             conn.execute("DELETE FROM embeddings WHERE key = ?", (key,))
             report.count("changed")
         elif row["path"] != str(path) or row["missing"]:

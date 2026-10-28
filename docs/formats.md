@@ -42,7 +42,7 @@ Every step writes `reports/<step>.json` and exits with the matching code:
 
 Each app creates its tables on first use and writes only its own row. An app refuses to open a workspace whose version for its tables differs from its own; there are no migrations, a new workspace is created instead.
 
-### Owner: analysis (version 1)
+### Owner: analysis (version 3)
 
 **media** — one row per file of the source folder.
 
@@ -54,7 +54,18 @@ Each app creates its tables on first use and writes only its own row. An app ref
 | `size`, `mtime_ns` | used to detect changed files |
 | `missing` | 1 if the file was not found by the last scan; such rows are skipped by all steps |
 | `frame_status`, `frame_error` | `pending` / `done` / `error`; NULL for images |
+| `tag_status`, `tag_error` | `pending` / `done` / `error` |
+| `tag_description` | the vision model's one or two sentences about the photo; context for the vocabulary step |
 | `embed_status`, `embed_error` | `pending` / `done` / `error` |
+
+**raw_tags** — what the vision model found in a file, cleaned: lower case, single spaces, no duplicates, stop words removed.
+
+| column | |
+|---|---|
+| `key` | references `media.key` |
+| `tag` | a general tag or a proper name; primary key is (`key`, `tag`) |
+| `kind` | `tag` for a general tag; for a name `landmark`, `place`, `brand`, `franchise`, `character`, or `name` if the model gave no valid kind |
+| `evidence` | for a name, what the model saw in the photo ("the sign reads ..."); NULL for tags |
 
 **embeddings** — one vector per file.
 

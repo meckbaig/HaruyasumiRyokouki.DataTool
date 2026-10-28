@@ -1,6 +1,7 @@
 """Workspace folder: settings from haru-data.toml, paths, and step reports."""
 
 import json
+import os
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,47 @@ class Workspace:
         if device not in DEVICES:
             raise WorkspaceError(f"[embed] device must be one of {', '.join(DEVICES)}, got '{device}'.")
         return device
+
+    @property
+    def vision(self):
+        """The [vision] section with defaults: max_side, concurrency."""
+        section = self.config.get("vision", {})
+        return {"max_side": int(section.get("max_side", 1024)), "concurrency": max(1, int(section.get("concurrency", 1)))}
+
+    def provider(self, task):
+        """Connection settings of the provider that [usage] assigns to the task, API key resolved from the environment."""
+        name = self.config.get("usage", {}).get(task)
+        if not name:
+            raise WorkspaceError(f"[usage] {task} is not set in {CONFIG_NAME}: name the provider to use.")
+        section = self.config.get("providers", {}).get(name)
+        if section is None:
+            raise WorkspaceError(f"[usage] {task} = '{name}', but there is no [providers.{name}] in {CONFIG_NAME}.")
+        if section.get("type", "openai") != "openai":
+            raise WorkspaceError(f"[providers.{name}] type must be 'openai' (any OpenAI-compatible server).")
+        for key in ("base_url", "model"):
+            if not section.get(key):
+                raise WorkspaceError(f"[providers.{name}] {key} is not set.")
+        api_key = None
+        if section.get("api_key_env"):
+            api_key = os.environ.get(section["api_key_env"])
+            if not api_key:
+                raise WorkspaceError(
+                    f"[providers.{name}] needs the API key in {section['api_key_env']}:"
+                    " set the environment variable or put it into .env in the workspace."
+                )
+        return {"name": name, "base_url": section["base_url"].rstrip("/"), "model": section["model"], "api_key": api_key}
+
+    def load_env(self):
+        """Read KEY=VALUE lines of .env in the workspace; variables already set in the environment win."""
+        path = self.root / ".env"
+        if not path.is_file():
+            return
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
     def connect(self):
         conn = db.connect(self.db_path)

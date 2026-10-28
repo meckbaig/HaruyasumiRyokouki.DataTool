@@ -1,6 +1,6 @@
 """Per-step counts and recent errors from work.sqlite, for debugging."""
 
-STAGES = ("frame", "embed")
+STAGES = ("frame", "tag", "embed")
 
 
 def summary(conn):

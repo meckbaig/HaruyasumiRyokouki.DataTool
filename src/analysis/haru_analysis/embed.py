@@ -12,6 +12,7 @@ so for rotated photos the new vectors differ from the old ones on the site.
 import numpy as np
 
 from . import db
+from .images import open_upright_rgb
 from .progress import Progress
 
 DEFAULT_MODEL_ID = "google/siglip2-base-patch16-256"
@@ -61,16 +62,6 @@ def _load(model_id=DEFAULT_MODEL_ID, device="auto"):
 def _normalize(vec):
     vec = np.asarray(vec, dtype=np.float32)
     return (vec / (np.linalg.norm(vec) + 1e-12)).astype(np.float32)
-
-
-def open_upright_rgb(path):
-    """Open an image (HEIC included) as RGB, rotated as the camera's EXIF orientation says."""
-    from PIL import Image, ImageOps
-    from pillow_heif import register_heif_opener
-
-    register_heif_opener()
-    with Image.open(path) as im:
-        return ImageOps.exif_transpose(im).convert("RGB")
 
 
 def embed_image(path, model_id=DEFAULT_MODEL_ID, device="auto"):

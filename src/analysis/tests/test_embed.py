@@ -3,7 +3,7 @@ import types
 import numpy as np
 import pytest
 
-from haru_analysis import embed, scan
+from haru_analysis import embed, images, scan
 from haru_analysis.workspace import StepReport
 
 
@@ -43,7 +43,7 @@ def test_photo_is_turned_upright_by_exif(tmp_path):
     exif[0x0112] = 6
     Image.new("RGB", (40, 20), "red").save(path, exif=exif)
 
-    im = embed.open_upright_rgb(path)
+    im = images.open_upright_rgb(path)
     assert im.size == (20, 40)
     assert im.mode == "RGB"
 

@@ -7,7 +7,7 @@ docs/formats.md; change both together.
 import sqlite3
 
 OWNER = "analysis"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 PENDING = "pending"
 DONE = "done"
@@ -27,8 +27,18 @@ CREATE TABLE IF NOT EXISTS media (
   missing       INTEGER NOT NULL DEFAULT 0,
   frame_status  TEXT,
   frame_error   TEXT,
+  tag_status    TEXT NOT NULL DEFAULT 'pending',
+  tag_error     TEXT,
+  tag_description TEXT,
   embed_status  TEXT NOT NULL DEFAULT 'pending',
   embed_error   TEXT
+);
+CREATE TABLE IF NOT EXISTS raw_tags (
+  key           TEXT NOT NULL REFERENCES media(key),
+  tag           TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'tag',
+  evidence      TEXT,
+  PRIMARY KEY (key, tag)
 );
 CREATE TABLE IF NOT EXISTS embeddings (
   key           TEXT PRIMARY KEY REFERENCES media(key),
