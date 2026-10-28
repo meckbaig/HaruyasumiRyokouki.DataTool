@@ -77,9 +77,9 @@ Each app creates its tables on first use and writes only its own row. An app ref
 | `dim` | vector length (768 for the site's model) |
 | `vector` | `dim` little-endian float32, L2-normalized |
 
-### Owner: tags (version 2)
+### Owner: tags (version 3)
 
-Written by `haru-tags vocab`, which replaces their content on every run. The model answers come from `cache/llm/`, so a rerun is cheap.
+Written by `haru-tags vocab`, which replaces their content on every run (the model answers come from `cache/llm/`, so a rerun is cheap), and by `haru-tags review --approve`, which replaces them with the reviewed `vocabulary.yaml`. After the approval the tables hold exactly the file: kept tags only, named by their English label.
 
 **vocab_tags** — the vocabulary: one row per final tag.
 
@@ -116,3 +116,10 @@ Written by `haru-tags vocab`, which replaces their content on every run. The mod
 | `kind` | `model` (an answer the code had to correct), `translation` (the backend could not translate), `slug`, `duplicate text` (a text twice in one tag, which the backend rejects), `same label` (two tags with one label in a language) |
 | `subject` | the tag it is about, or NULL |
 | `message` | what is wrong |
+
+**vocab_approval** — at most one row: the vocabulary was approved. Steps that write to the site require it and the hash to match the current `vocabulary.yaml`, so an edit after the approval needs a new one.
+
+| column | |
+|---|---|
+| `file_sha256` | SHA-256 of the approved `vocabulary.yaml` |
+| `approved_at` | time of the approval, UTC |

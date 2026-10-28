@@ -42,17 +42,36 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 				// The backend's AI may be a free tier with a low request rate; raise it for a paid one.
 				var translator = new Translator(api, workspace.LlmCacheDir, workspace.GetInt("vocabulary.translate_concurrency") ?? 4, Console.Out);
 				await new VocabStep(chat, api, translator, workspace.VocabularyPath, Console.Out).RunAsync(db, report, cancellationToken);
+				return null;
 			}));
 			root.Subcommands.Add(vocab);
+
+			var check = new Option<bool>("--check") { Description = "check the edited vocabulary.yaml, with line numbers" };
+			var approve = new Option<bool>("--approve") { Description = "check vocabulary.yaml and make it the vocabulary written to the site" };
+			var review = new Command("review", "summary of the vocabulary and whether it is approved; exits with 2 while it waits for review");
+			review.Options.Add(check);
+			review.Options.Add(approve);
+			review.Validators.Add(result =>
+			{
+				if (result.GetValue(check) && result.GetValue(approve))
+					result.AddError("use either --check or --approve");
+			});
+			review.SetAction((parse, cancellationToken) => RunStepAsync(parse, "review", (workspace, db, report) =>
+			{
+				var mode = parse.GetValue(approve) ? ReviewStep.Mode.Approve : parse.GetValue(check) ? ReviewStep.Mode.Check : ReviewStep.Mode.Summary;
+				return Task.FromResult<string?>(new ReviewStep(workspace.VocabularyPath, Console.Out).Run(db, mode, report));
+			}));
+			root.Subcommands.Add(review);
 
 			return root;
 		}
 
 		/// <summary>
-		/// Runs a step with its report. A problem the user has to fix, a failed model or API call and
+		/// Runs a step with its report; the step may return its own status (needs_review), otherwise
+		/// the report decides by its errors. A problem the user has to fix, a failed model or API call and
 		/// Ctrl+C all end in a report with status error and exit code 1; work saved so far stays saved.
 		/// </summary>
-		private static async Task<int> RunStepAsync(ParseResult parse, string step, Func<Workspace, SqliteConnection, StepReport, Task> run)
+		private static async Task<int> RunStepAsync(ParseResult parse, string step, Func<Workspace, SqliteConnection, StepReport, Task<string?>> run)
 		{
 			Workspace workspace;
 			try
@@ -66,10 +85,11 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			}
 
 			var report = new StepReport(step);
+			string? status;
 			try
 			{
 				using var db = WorkDb.Open(workspace);
-				await run(workspace, db, report);
+				status = await run(workspace, db, report);
 			}
 			catch (OperationCanceledException)
 			{
@@ -85,7 +105,7 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			}
 
 			Console.WriteLine($"{step}: " + string.Join(", ", report.Counts.Select(c => $"{c.Key} {c.Value}")));
-			return report.Finish(workspace);
+			return report.Finish(workspace, status);
 		}
 
 		/// <summary>Opens the workspace and turns problems the user has to fix into one line and exit code 1.</summary>

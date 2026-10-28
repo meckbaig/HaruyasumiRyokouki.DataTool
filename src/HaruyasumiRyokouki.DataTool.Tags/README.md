@@ -5,6 +5,7 @@ The part of the data tool that talks to the site: it turns the machine tags of `
 ```
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- status --workspace my-trip
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- vocab  --workspace my-trip
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- review --workspace my-trip [--check | --approve]
 ```
 
 Normally `haru-data run` starts the steps. A typo in an option is an error, not a silently ignored flag.
@@ -57,6 +58,16 @@ translate_concurrency = 4          # parallel requests to /v1/tags/completion; a
 The backend must be running for translations; its address is `[backend] api` (or `HARU_API`), the admin's login goes into `HARU_USER` and `HARU_PASSWORD` in `.env`. The step checks the connection before it asks the model anything.
 
 Every answer is cached in `cache/llm/` by a hash of the request, so a run stopped by an error or Ctrl+C does not pay again. An answer that cannot be parsed, or that is clearly incomplete, is asked once more and never cached. The report counts requests and tokens.
+
+## Reviewing the vocabulary
+
+`vocabulary.yaml` is the person's part: one tag per entry with labels, aliases, `sources` (the machine tags that put it on a photo) and the number of photos, the tags the model dropped in a separate list with the reason, and the problems the checks found at the top. Labels and aliases can be changed, tags deleted, sources moved between tags, and dropped tags moved back.
+
+- `review` prints a summary (new and existing tags, machine tags not used, files left without any tag, the most used tags) and exits with `2` while the current file waits for approval, so `haru-data run` stops here.
+- `review --check` checks the file and names the line of every problem. Errors are what the site would reject or what would break the import: an empty or malformed slug, a missing label, a text twice in one tag, an alias equal to a label, the same slug or English label twice, a source in two tags, a source that is no machine tag at all. Two tags with the same Russian or Japanese label are a warning: visitors cannot tell them apart, but the site accepts it.
+- `review --approve` checks the file and, without errors, makes it the vocabulary in `work.sqlite`. The hash of the approved file is stored; editing the file afterwards takes the approval back, and running `vocab` again does too.
+
+A deleted tag is simply not created, and its sources put no tag on the photos; the summary shows how many machine tags end up unused.
 
 ## How it works with the backend
 
