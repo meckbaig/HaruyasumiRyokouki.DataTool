@@ -21,3 +21,8 @@ __pycache__/
 
 # Model and package caches kept inside the repository
 /.cache/
+
+# Working documents of the development, kept out of the repository
+/docs/spec.md
+/docs/analysis.md
+/docs/plan.md

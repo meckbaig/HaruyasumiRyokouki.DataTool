@@ -2,157 +2,112 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using HaruyasumiRyokouki.DataTool.Common;
 
-namespace TagsTool;
+namespace HaruyasumiRyokouki.DataTool.Tags;
 
 /// <summary>
-/// Тонкая обёртка над HTTP API сервера. Всё, что требует базы или DeepSeek,
-/// делается здесь — своего подключения к Postgres у инструмента нет.
+/// Thin client of the site's HTTP API. Tags go through the backend's own commands, with its
+/// validation; this app has no write access to the tag tables. DTO shapes follow the backend's
+/// Features/Tags and Controllers/V1/TagsController.cs.
 /// </summary>
 internal sealed class BackendApi : IDisposable
 {
-	private readonly HttpClient _http;
-
 	public static readonly JsonSerializerOptions Json = new()
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
 		PropertyNameCaseInsensitive = true,
-		WriteIndented = true,
-		Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+		Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
 	};
 
-	private BackendApi(HttpClient http) => _http = http;
+	private readonly HttpClient _http;
 
-	public static BackendApi Create(Options options)
+	public BackendApi(Uri baseAddress, string user, string password, HttpMessageHandler? handler = null)
 	{
-		string baseUrl = options.GetOrEnv("api", "TAGSTOOL_API", "http://localhost:5101")!;
-		string? user = options.GetOrEnv("user", "TAGSTOOL_USER");
-		string? password = options.GetOrEnv("password", "TAGSTOOL_PASSWORD");
-
-		if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(password))
-			throw new ArgumentException(
-				"Нужны --user и --password (или переменные TAGSTOOL_USER / TAGSTOOL_PASSWORD). " +
-				"Эндпоинты тегов помечены [Authorize].");
-
-		// По умолчанию HttpClient не ограничивает число соединений к хосту, но
-		// выставляем явно по числу потоков: так поведение предсказуемо и видно,
-		// что параллельность упирается именно в --threads, а не в транспорт.
-		int threads = int.TryParse(options.Get("threads"), out int t) ? t : 1;
-
-		var handler = new SocketsHttpHandler
+		_http = new HttpClient(handler ?? new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) })
 		{
-			MaxConnectionsPerServer = Math.Max(threads, 10),
-			PooledConnectionLifetime = TimeSpan.FromMinutes(10)
-		};
-
-		var http = new HttpClient(handler)
-		{
-			BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/"),
-			// Перевод одного тега — это вызов к DeepSeek, он может быть долгим
+			BaseAddress = new Uri(baseAddress.ToString().TrimEnd('/') + "/"),
 			Timeout = TimeSpan.FromMinutes(2)
 		};
 
 		string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{password}"));
-		http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-
-		return new BackendApi(http);
+		_http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 	}
 
+	/// <summary>The API address for printing before writing.</summary>
+	public Uri BaseAddress => _http.BaseAddress!;
+
 	/// <summary>
-	/// Проверка доступности до того, как начнётся длинная работа.
-	/// Лучше упасть на первой секунде, чем на сотом теге.
+	/// Client for the API in <c>[backend] api</c> (or HARU_API), with HARU_USER and HARU_PASSWORD.
+	/// There is no default address: writing to a server nobody chose is the mistake this prevents.
 	/// </summary>
-	public async Task EnsureReachableAsync()
+	public static BackendApi FromWorkspace(Workspace workspace)
 	{
+		string api = workspace.Require("backend.api", "HARU_API");
+		if (!Uri.TryCreate(api, UriKind.Absolute, out var uri))
+			throw new WorkspaceException($"backend api '{api}' is not an absolute URL.");
+
+		return new BackendApi(uri, Workspace.RequireSecret("HARU_USER"), Workspace.RequireSecret("HARU_PASSWORD"));
+	}
+
+	/// <summary>Fails within a second, with a clear reason, instead of at the hundredth tag.</summary>
+	public async Task EnsureReachableAsync(CancellationToken cancellationToken = default)
+	{
+		HttpResponseMessage response;
 		try
 		{
-			var response = await _http.GetAsync("v1/Tags");
-
-			if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-				throw new InvalidOperationException(
-					$"Сервер отвечает {(int)response.StatusCode} — не подошли --user/--password.");
-
-			response.EnsureSuccessStatusCode();
+			response = await _http.GetAsync("v1/tags", cancellationToken);
 		}
 		catch (HttpRequestException ex)
 		{
-			throw new InvalidOperationException(
-				$"Не достучаться до {_http.BaseAddress}. Сервер запущен? ({ex.Message})");
+			throw new InvalidOperationException($"Cannot reach {_http.BaseAddress}. Is the backend running? ({ex.Message})");
 		}
+
+		if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+			throw new InvalidOperationException(
+				$"The backend answers {(int)response.StatusCode}: HARU_USER or HARU_PASSWORD is wrong.");
+
+		await ThrowIfFailedAsync(response, "reading tags");
 	}
 
-	/// <summary>
-	/// POST /v1/Tags/completion — перевод и алиасы через GetTagCompletionCommand.
-	/// Потокобезопасен: HttpClient рассчитан на параллельные запросы.
-	/// </summary>
-	public async Task<TagCompletion> CompleteTagAsync(string tag, CancellationToken cancellationToken = default)
+	/// <summary>GET /v1/tags: the site's current vocabulary.</summary>
+	public async Task<List<ExistingTag>> GetTagsAsync(CancellationToken cancellationToken = default)
 	{
-		var response = await _http.PostAsJsonAsync(
-			"v1/Tags/completion",
-			new { tag },
-			Json,
-			cancellationToken);
+		var response = await _http.GetAsync("v1/tags", cancellationToken);
+		await ThrowIfFailedAsync(response, "reading tags");
 
-		await ThrowIfFailedAsync(response, $"перевод тега '{tag}'");
-
-		var payload = await response.Content.ReadFromJsonAsync<CompletionEnvelope>(Json, cancellationToken)
-			?? throw new InvalidOperationException($"Пустой ответ на перевод тега '{tag}'");
-
-		return payload.Tag;
-	}
-
-	/// <summary>POST /v1/Tags — создание тега через AddTagCommand.</summary>
-	public async Task<int> AddTagAsync(string slug, IEnumerable<TagText> translations, IEnumerable<TagText> aliases)
-	{
-		var response = await _http.PostAsJsonAsync(
-			"v1/Tags",
-			new
-			{
-				tag = new
-				{
-					slug,
-					translations = translations.ToList(),
-					aliases = aliases.ToList()
-				}
-			},
-			Json);
-
-		await ThrowIfFailedAsync(response, $"создание тега '{slug}'");
-
-		var payload = await response.Content.ReadFromJsonAsync<AddTagEnvelope>(Json)
-			?? throw new InvalidOperationException($"Пустой ответ на создание тега '{slug}'");
-
-		return payload.Tag.Id;
-	}
-
-	/// <summary>GET /v1/Tags — текущий словарь, чтобы не плодить дубли.</summary>
-	public async Task<List<ExistingTag>> GetTagsAsync()
-	{
-		var response = await _http.GetAsync("v1/Tags");
-		await ThrowIfFailedAsync(response, "получение списка тегов");
-
-		var payload = await response.Content.ReadFromJsonAsync<GetTagsEnvelope>(Json);
+		var payload = await response.Content.ReadFromJsonAsync<GetTagsEnvelope>(Json, cancellationToken);
 		return payload?.Items ?? [];
 	}
 
-	/// <summary>PATCH /v1/Media — простановка тегов пачке медиафайлов через EditMediaCommand.</summary>
-	public async Task AssignTagsAsync(IReadOnlyCollection<int> mediaIds, IReadOnlyCollection<int> tagIds)
+	/// <summary>POST /v1/tags: creates a tag and returns its id.</summary>
+	public async Task<int> AddTagAsync(string slug, IEnumerable<TagText> translations, IEnumerable<TagText> aliases,
+		CancellationToken cancellationToken = default)
 	{
-		var request = new HttpRequestMessage(HttpMethod.Patch, "v1/Media")
-		{
-			Content = JsonContent.Create(
-				new
-				{
-					ids = mediaIds,
-					changes = new { tagIds },
-					autoTranslate = false
-				},
-				options: Json)
-		};
+		var body = new { tag = new { slug, translations = translations.ToList(), aliases = aliases.ToList() } };
+		var response = await _http.PostAsJsonAsync("v1/tags", body, Json, cancellationToken);
+		await ThrowIfFailedAsync(response, $"creating tag '{slug}'");
 
-		var response = await _http.SendAsync(request);
-		await ThrowIfFailedAsync(response, $"простановка тегов {mediaIds.Count} файлам");
+		var payload = await response.Content.ReadFromJsonAsync<AddTagEnvelope>(Json, cancellationToken)
+			?? throw new InvalidOperationException($"Empty answer when creating tag '{slug}'");
+		return payload.Tag.Id;
+	}
+
+	/// <summary>
+	/// POST /v1/tags/{id}/media: adds the tag to the files and returns how many did not have it.
+	/// It never removes tags, so running it again is safe. (PATCH /v1/media replaces a file's
+	/// whole tag set and would wipe tags added by hand; it is not used.)
+	/// </summary>
+	public async Task<int> AddTagToMediaAsync(int tagId, IReadOnlyCollection<int> mediaFileIds,
+		CancellationToken cancellationToken = default)
+	{
+		var response = await _http.PostAsJsonAsync($"v1/tags/{tagId}/media", new { mediaFileIds }, Json, cancellationToken);
+		await ThrowIfFailedAsync(response, $"adding tag {tagId} to {mediaFileIds.Count} files");
+
+		var payload = await response.Content.ReadFromJsonAsync<AddTagToMediaEnvelope>(Json, cancellationToken);
+		return payload?.Affected ?? 0;
 	}
 
 	private static async Task ThrowIfFailedAsync(HttpResponseMessage response, string what)
@@ -169,22 +124,14 @@ internal sealed class BackendApi : IDisposable
 
 	public void Dispose() => _http.Dispose();
 
-	// -- формы ответов сервера ------------------------------------------------
-
-	private sealed record CompletionEnvelope(TagCompletion Tag);
 	private sealed record AddTagEnvelope(AddedTag Tag);
 	private sealed record AddedTag(int Id, string Slug);
 	private sealed record GetTagsEnvelope(List<ExistingTag> Items);
+	private sealed record AddTagToMediaEnvelope(int Affected);
 }
 
-/// <summary>Ответ GetTagCompletionCommand.</summary>
-internal sealed record TagCompletion(
-	string? Slug,
-	List<TagText>? Translations,
-	List<TagText>? Aliases);
-
-/// <summary>Пара «язык — текст», как в TagTranslationDto.</summary>
+/// <summary>A language and a text, as in the backend's TagTranslationDto.</summary>
 internal sealed record TagText(string LanguageCode, string Text);
 
-/// <summary>Элемент GET /v1/Tags — нужен только чтобы не создавать дубли.</summary>
-internal sealed record ExistingTag(int Id, string Slug);
+/// <summary>An item of GET /v1/tags.</summary>
+internal sealed record ExistingTag(int Id, string Slug, List<TagText>? Translations, List<TagText>? Aliases);
