@@ -229,3 +229,41 @@ def test_names_and_description_are_stored(make_workspace):
     assert [tuple(r) for r in rows] == [
         ("anime", "tag", None), ("figure", "tag", None), ("hatsune miku", "character", "teal twin tails")]
     assert conn.execute("SELECT tag_description FROM media WHERE key = 'a'").fetchone()[0] == "Figures of a character."
+
+
+def test_reasoning_effort_is_sent_only_when_set(make_workspace, tmp_path):
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"tags": ["torii"]}'}}]})
+
+    path = tmp_path / "p.jpg"
+    photo(path, "p")
+    for extra in ("", 'reasoning_effort = "none"\n'):
+        ws, _ = make_workspace(PROVIDER_TOML.replace('model = "qwen-vl"\n', 'model = "qwen-vl"\n' + extra))
+        client = tag.VisionClient(ws.provider("vision"), transport=httpx.MockTransport(handler))
+        tag.tag_image(client, tag.PROMPT, path, max_side=64)
+    assert "reasoning_effort" not in bodies[0]
+    assert bodies[1]["reasoning_effort"] == "none"
+
+
+def test_json_object_mode_and_token_usage(make_workspace, tmp_path):
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"tags": ["torii"]}'}}],
+            "usage": {"prompt_tokens": 700, "completion_tokens": 40},
+        })
+
+    ws, _ = make_workspace(PROVIDER_TOML.replace('model = "qwen-vl"', 'model = "qwen-vl"\njson_mode = "object"'))
+    client = tag.VisionClient(ws.provider("vision"), transport=httpx.MockTransport(handler))
+    path = tmp_path / "p.jpg"
+    photo(path, "p")
+    tag.tag_image(client, tag.PROMPT, path, max_side=64)
+    tag.tag_image(client, tag.PROMPT, path, max_side=64)
+
+    assert bodies[0]["response_format"] == {"type": "json_object"}
+    assert client.usage == {"prompt tokens": 1400, "completion tokens": 80}

@@ -34,8 +34,10 @@ source = "D:/Photos/Japan"                   # trip folder, searched recursively
 [providers.local]                            # any OpenAI-compatible server; the name is yours
 type = "openai"                              # the only supported type
 base_url = "http://localhost:1234/v1"        # LM Studio; llama.cpp server: http://localhost:8080/v1; Ollama: http://localhost:11434/v1
-model = "qwen2.5-vl-7b-instruct"             # model name as the server lists it
-# api_key_env = "OPENROUTER_API_KEY"         # only for servers that need a key; the key itself goes into .env
+model = "qwen3-vl-8b-instruct"               # model name as the server lists it
+# api_key_env = "DEEPSEEK_API_KEY"           # only for servers that need a key; the key itself goes into .env
+# reasoning_effort = "none"                  # turns off thinking of reasoning models; tagging does not need it and it costs minutes per photo
+# json_mode = "object"                       # for APIs without JSON schema support, such as DeepSeek
 
 [usage]
 vision = "local"                             # provider for the tag step
@@ -67,7 +69,9 @@ The prompt has no example tags or names on purpose: a small model copies example
 
 Small models also ignore "do not" lists, so after the answer a stop list in `tag.py` removes words too broad to narrow a search (building, sky, people, japan), incidental objects (chopsticks, signs), seasons (the site knows every photo's date) and colors, and strips colors and materials from the front of a tag ("red torii" becomes "torii"). An invalid answer is asked again once before the file is marked as failed. The tags are raw material: `haru-tags vocab` later merges synonyms and plurals, fixes spelling, checks names and translates.
 
-Requests go one at a time by default: with parallel requests LM Studio gave slightly different answers for the same photo, one at a time it is repeatable, and on one GPU it is not slower.
+Requests go one at a time by default: with parallel requests LM Studio gave slightly different answers for the same photo, one at a time it is repeatable, and on one GPU it is not slower. A cloud API takes parallel requests well.
+
+Which model: `qwen3-vl-8b-instruct` in LM Studio fits 8 to 12 GB of video memory and tags about a photo per two seconds; larger local models know more names but need 16 GB and are several times slower. A cloud model such as DeepSeek recognizes noticeably more places, dishes and franchises; the step report counts the tokens used, so the cost of a run is known. On the first test it was about 900 input and 140 output tokens per photo.
 
 `tag --reset` drops all machine tags, names and descriptions and asks again, for trying another prompt or model.
 

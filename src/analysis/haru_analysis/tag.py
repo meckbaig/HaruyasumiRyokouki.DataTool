@@ -103,6 +103,8 @@ STOP_TAGS = {
     "traffic light", "car", "road", "ground", "grass", "stand", "cupboard", "display",
     "beautiful", "serene", "peaceful", "kawaii", "cute", "colorful",
     "selfie", "tourist", "architecture", "asia", "urban", "religion", "religious building", "signs", "retro",
+    "hand", "sightseeing", "landmark", "japan trip", "japan travel", "travel destination", "outdoor scenery",
+    "food photography", "blurry", "blurry photo", "close-up", "close up",
     # The site knows the date of every photo; the model guesses seasons from light and colors.
     "spring", "summer", "autumn", "fall", "winter",
     # The model puts these on daytime photos with warm light; "china" may mean
@@ -180,16 +182,23 @@ class VisionClient:
         import httpx
 
         self.model = provider["model"]
+        # "none" turns off thinking of reasoning models in LM Studio; tagging does not need it
+        # and it multiplies the time per photo.
+        self.reasoning_effort = provider.get("reasoning_effort")
+        # Some APIs (DeepSeek) take only {"type": "json_object"}; the prompt already describes the shape.
+        self.response_format = {"type": "json_object"} if provider.get("json_mode") == "object" else RESPONSE_FORMAT
         headers = {"Authorization": "Bearer " + provider["api_key"]} if provider["api_key"] else {}
         self._http = httpx.Client(base_url=provider["base_url"], headers=headers, timeout=timeout, transport=transport)
         self._httpx = httpx
+        self._lock = threading.Lock()
+        self.usage = {"prompt tokens": 0, "completion tokens": 0}
 
     def ask(self, prompt, jpeg):
         image_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
         body = {
             "model": self.model,
             "temperature": 0,
-            "response_format": RESPONSE_FORMAT,
+            "response_format": self.response_format,
             "messages": [{
                 "role": "user",
                 "content": [
@@ -198,13 +207,20 @@ class VisionClient:
                 ],
             }],
         }
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         try:
             resp = self._http.post("/chat/completions", json=body)
         except self._httpx.ConnectError as exc:
             raise ServerUnavailable(f"cannot connect to {self._http.base_url}: {exc}") from exc
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        usage = data.get("usage") or {}
+        with self._lock:
+            self.usage["prompt tokens"] += usage.get("prompt_tokens", 0)
+            self.usage["completion tokens"] += usage.get("completion_tokens", 0)
+        return data["choices"][0]["message"]["content"]
 
     def close(self):
         self._http.close()
@@ -284,6 +300,9 @@ def run_tag(conn, workspace, report, client=None, hint_tags=None, reset=False):
     finally:
         progress.close()
         client.close()
+        # Token use for cost estimates of cloud providers; also written when the step is interrupted.
+        for name, value in getattr(client, "usage", {}).items():
+            report.counts[name] = value
     pool.shutdown()
     report.counts["distinct tags"] = conn.execute(
         "SELECT COUNT(DISTINCT tag) FROM raw_tags WHERE kind = 'tag'").fetchone()[0]

@@ -91,7 +91,8 @@ class Workspace:
                     f"[providers.{name}] needs the API key in {section['api_key_env']}:"
                     " set the environment variable or put it into .env in the workspace."
                 )
-        return {"name": name, "base_url": section["base_url"].rstrip("/"), "model": section["model"], "api_key": api_key}
+        return {"name": name, "base_url": section["base_url"].rstrip("/"), "model": section["model"], "api_key": api_key,
+                "reasoning_effort": section.get("reasoning_effort"), "json_mode": section.get("json_mode")}
 
     def load_env(self):
         """Read KEY=VALUE lines of .env in the workspace; variables already set in the environment win."""
