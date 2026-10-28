@@ -31,6 +31,75 @@ dotnet build
 
 Everything the tool downloads stays in the repository: NuGet packages, Python, its packages and the SigLIP model go into `.cache/` (about 2.5 GB after the first run, mostly torch and the model), the analysis environment into `src/analysis/.venv`. Deleting the repository removes all of it.
 
+## Folders
+
+Three folders take part, and they are easy to mix up:
+
+| Folder | What it is | Where it is set |
+|---|---|---|
+| **Source folder** | The photos and videos of the trip on your computer, collected by you. The tool only reads them and never changes them. | `--source` of `haru-data init`, then `source` in `haru-data.toml` |
+| **Workspace** | The state of one trip: `haru-data.toml` (settings), `.env` (secrets), `work.sqlite` (results of every step), `vocabulary.yaml` (the vocabulary for the review), `reports/` (a report per step), `frames/` (frames of videos), `cache/llm/` (answers of the cloud model). Created by `haru-data init`; `run`, `status` and the other commands work in it. Keep it until the trip is on the site, and for adding photos later. | the argument of `init`, then `--workspace` or the current folder |
+| **Site storage** | The folder the backend imports media from: a Nextcloud folder over WebDAV or a local folder of the server. `upload` copies the files there; the site converts them and keeps them there. | `[storage]` in `haru-data.toml` |
+
+## Commands
+
+`haru-data` is the command for everyday use. Every command works in a workspace: the current folder, or the one given with `--workspace <folder>`. Exit codes: `0` done, `1` error, `2` waits for a person (the review, a declined question).
+
+| Command | What it does |
+|---|---|
+| `haru-data init <folder> --source <folder>` | Creates a workspace in `<folder>` (the folder is created if needed) with `haru-data.toml`, `.env` and `work.sqlite`. `--source` is the folder with the photos and videos of the trip, written into the settings. Then runs `doctor`. Refuses a folder that is a workspace already. |
+| `haru-data doctor` | Checks what the steps need: uv, ffmpeg, the analysis packages and the SigLIP model, the source folder, the vision model server, the API key of the cloud model, the site's API, the storage settings and whether the secrets are set (their values are never printed). Changes nothing. |
+| `haru-data run` | Runs the steps that are not done, in their order (see [the steps](#steps)), and stops at the vocabulary review, at a question answered "no" and at an error. Running it again continues where it stopped. |
+| `haru-data run <step>` | Runs one step, even if it is done, for example `haru-data run sync`. |
+| `haru-data run --yes` | Answers "yes" for the steps: before the paid vocabulary step and before every write to the site. What would be asked is still printed. Needed where nobody can answer, such as a scheduled run. |
+| `haru-data run --no-review` | Approves `vocabulary.yaml` as the model wrote it instead of stopping for the review. |
+| `haru-data status` | Shows every step with its state (`done`, `to run`, `errors`, `waiting for you`, `not run`) and its counts, the errors of the step that failed and the command to run next. Changes nothing. |
+| `haru-data review` | A summary of the vocabulary: tags, new and existing, files left without a tag, the most used tags, and whether it is approved. |
+| `haru-data review --check` | Checks the edited `vocabulary.yaml` and prints every problem with its line number. Changes nothing. |
+| `haru-data review --approve` | Checks `vocabulary.yaml` and, if there are no errors, makes it the vocabulary that is written to the site. |
+
+### Steps
+
+`run` runs these steps in this order. Each is a command of one of the two apps; they can also be started directly (below).
+
+| Step | App | What it does | When `run` starts it |
+|---|---|---|---|
+| `scan` | analysis | Finds the photos and videos of the source folder, checks that names are unique | every time |
+| `frames` | analysis | Takes the frame at 1 second of every video (ffmpeg) | every time; skips videos that are done |
+| `tag` | analysis | Asks the vision model for tags and names of every photo and frame | every time; skips files that are done, needs the model server only for new files |
+| `embed` | analysis | Computes SigLIP image vectors | every time; skips files that are done |
+| `vocab` | tags | Builds the vocabulary from the machine tags with the cloud model, translations through the site's AI, writes `vocabulary.yaml` | when the machine tags changed; prints an estimate and asks first |
+| `review` | tags | Stops until `vocabulary.yaml` is approved | every time |
+| `push-tags` | tags | Creates the tags the site does not have | when the approved vocabulary changed; asks first |
+| `upload` | tags | Copies the files the storage does not have into the site storage | when files were added; asks first |
+| `sync` | tags | Lets the site import the new files of its storage, reads their ids | when files were added; asks first |
+| `assign` | tags | Adds the tags to the files on the site; never removes a tag | when the vocabulary or the files on the site changed; asks first |
+| `push-embeddings` | tags | Writes the image vectors of files that have none yet into the site's database | when the vectors or the files on the site changed; asks first |
+
+### Running a step directly
+
+For repeating or debugging one step with options `run` does not pass. The workspace is required here:
+
+```
+uv-local run --project src/analysis haru-analysis <step> --workspace my-trip
+haru-tags <step> --workspace my-trip
+```
+
+`haru-tags` lies next to `haru-data`. `uv-local` is `uv-local.cmd` (Windows) or `./uv-local.sh` in the repository root: uv with its downloads kept in `.cache/`.
+
+| Command | What it does |
+|---|---|
+| `haru-analysis status` | Files per step: done, to do, with errors, and the errors. |
+| `haru-analysis tag --reset` | Deletes all machine tags and asks the model again, for example after changing the model. |
+| `haru-analysis tag --vocabulary-hint <file>` | Gives the model a text file with tags, one per line, to prefer. |
+| `haru-analysis embed --reset` | Deletes all vectors and computes them again. |
+| `haru-tags status` | What the analysis found: files, tagged files, files with vectors, distinct tags and names. |
+| `haru-tags vocab --estimate` | Prints how many requests and tokens `vocab` would send; sends nothing. |
+| `haru-tags push-embeddings --dry-run` | Matches the vectors with the files on the site and reports; writes nothing. |
+| `haru-tags push-embeddings --replace` | Also overwrites the vectors the site has already; by default they are kept. |
+
+The steps of `haru-tags` that write to the site take `--yes`, like `run`.
+
 ## Filling the site with a trip
 
 The steps below are the whole cycle, including what only a person can do. `haru-data run` does the analysis, the vocabulary and the writes by itself and stops where a person is needed. It can be stopped with Ctrl+C at any moment and started again: finished work is kept.
@@ -60,7 +129,7 @@ haru-data init my-trip --source D:/Photos/Japan
 cd my-trip
 ```
 
-The workspace can be anywhere. Fill in `haru-data.toml`, where every setting has a comment: the address of the site's API in `[backend]`, the storage in `[storage]` (`webdav` with the URL of the media folder, or `local` with the folder of the backend's local storage), and the models if the defaults do not fit. Put the secrets into `.env` next to it: `DEEPSEEK_API_KEY`, `HARU_USER` and `HARU_PASSWORD` of the site's admin, `HARU_STORAGE_USER` and `HARU_STORAGE_PASSWORD` for WebDAV, `HARU_CONNECTION` for Postgres. There are no default addresses: until an address is set, nothing is written anywhere.
+`my-trip` is the new workspace and `--source` the folder with the photos and videos from step 1 (see [Folders](#folders)). The workspace can be anywhere, also outside the repository. Fill in `haru-data.toml`, where every setting has a comment: the address of the site's API in `[backend]`, the storage in `[storage]` (`webdav` with the URL of the media folder, or `local` with the folder of the backend's local storage), and the models if the defaults do not fit. Put the secrets into `.env` next to it: `DEEPSEEK_API_KEY`, `HARU_USER` and `HARU_PASSWORD` of the site's admin, `HARU_STORAGE_USER` and `HARU_STORAGE_PASSWORD` for WebDAV, `HARU_CONNECTION` for Postgres. There are no default addresses: until an address is set, nothing is written anywhere.
 
 Start LM Studio, load the vision model, start its server, then check:
 
