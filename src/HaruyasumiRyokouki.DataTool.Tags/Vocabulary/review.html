@@ -66,7 +66,13 @@
 	.issue.error { background: var(--error-bg); color: var(--error); }
 	.issue.warning { background: var(--warn-bg); color: var(--warn); }
 	.photos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-	.photos img { height: 110px; border-radius: 4px; background: var(--chip); }
+	.photos { align-items: center; }
+	.photos img { height: 110px; border-radius: 4px; background: var(--chip); display: block; }
+	.tile { position: relative; }
+	.tile.excluded img, .tile.excluded .file { opacity: .25; filter: grayscale(1); }
+	.tile-button { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .65); color: #fff; font-size: 15px; line-height: 26px; }
+	.tile-button:hover { background: var(--error); color: #fff; }
+	.tile.excluded .tile-button:hover { background: var(--ok); }
 	.photos .file { height: 110px; width: 110px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 4px; padding: 4px; word-break: break-all; }
 	.lang { display: grid; grid-template-columns: 40px 1fr; gap: 6px 10px; align-items: start; margin-top: 6px; }
 	.lang .code { font-weight: 600; color: var(--muted); padding-top: 6px; }
@@ -187,6 +193,7 @@ function help() {
 		"Every card is a tag that will be put on the site, made from the tags the vision model gave the photos. Press Photos on a card to see which photos get it.",
 		"Fix what you do not like: rename a tag (the English name is what visitors see), delete a tag that is useless, or bring back a tag the model threw away (at the bottom).",
 		"\"Machine tags\" are what the model wrote on the photos; a photo gets the tag if it has any of them. Move one to another tag with →, or remove it with ×.",
+		"A photo that got a tag by mistake: open Photos and press × on it; ↺ gives the tag back. Click a photo to see it in full size.",
 		"Tags marked \"on the site\" exist already and are not created again.",
 		"Red problems must be fixed, yellow ones are only hints. Then press Approve and run haru-data run in the terminal: the new tags are translated next."
 	];
@@ -266,7 +273,7 @@ function tagCard(index) {
 			tag.kind && tag.kind !== "tag" ? el("span", { class: "badge", title: "A name the vision model read or recognized" }, tag.kind) : null,
 			tag.existing ? el("span", { class: "badge ok" }, "on the site") : null,
 			el("span", { class: "count", "data-photos": index }, `${check?.photos?.[index] ?? tag.photos} photos`),
-			el("button", { class: "small", onclick: () => togglePhotos(card, "tag-" + index, tag.sources) }, "Photos"),
+			el("button", { class: "small", title: "Show the photos that get this tag; × on a photo takes the tag off it", onclick: () => togglePhotos(card, "tag-" + index, tag.sources, tag) }, "Photos"),
 			el("button", { class: "small", title: "Delete the tag; it moves to the thrown-away tags at the bottom", onclick: () => deleteTag(index) }, "Delete")),
 		el("div", { class: "row" }, el("span", { class: "label" }, "id"), slug),
 		el("div", { class: "row" }, el("span", { class: "label" }, "also found by"),
@@ -278,7 +285,7 @@ function tagCard(index) {
 				chips(tag.sources, i => { tag.sources.splice(i, 1); changed(true); }, (source) => moveButton(index, source)))),
 		el("div", { class: "issues" }),
 		el("div", { class: "photos" }));
-	if (openPhotos.has("tag-" + index)) loadPhotos(card, tag.sources);
+	if (openPhotos.has("tag-" + index)) loadPhotos(card, tag.sources, tag);
 	return card;
 }
 
@@ -387,7 +394,8 @@ function showCheck() {
 	});
 	document.querySelectorAll("[data-photos]").forEach(span => {
 		const index = Number(span.dataset.photos);
-		span.textContent = `${check?.photos?.[index] ?? model.tags[index].photos} photos`;
+		const off = model.tags[index].excluded?.length ?? 0;
+		span.textContent = `${check?.photos?.[index] ?? model.tags[index].photos} photos` + (off ? `, ${off} taken off` : "");
 	});
 	$("approve").disabled = finished || errors.length > 0;
 	$("approve").title = errors.length ? "Fix the red problems first" : "";
@@ -404,22 +412,52 @@ function jumpTo(index) {
 
 // ---------- photos ----------
 
-function togglePhotos(card, id, sources) {
+// tag: the tag whose photos these are, so a photo can be taken out of it; null for thrown-away tags.
+function togglePhotos(card, id, sources, tag = null) {
 	if (openPhotos.has(id)) { openPhotos.delete(id); card.querySelector(".photos").replaceChildren(); return; }
 	openPhotos.add(id);
-	loadPhotos(card, sources);
+	loadPhotos(card, sources, tag);
 }
 
-async function loadPhotos(card, sources) {
+async function loadPhotos(card, sources, tag = null, offset = 0) {
 	const box = card.querySelector(".photos");
-	box.replaceChildren(el("span", { class: "count" }, "Loading photos…"));
+	if (offset === 0) box.replaceChildren(el("span", { class: "count" }, "Loading photos…"));
 	const query = sources.map(s => "source=" + encodeURIComponent(s)).join("&");
-	const result = await request("/api/photos?" + query);
-	box.replaceChildren(
-		...result.files.map(f => f.shown
-			? el("img", { src: api("/api/photo/" + encodeURIComponent(f.key)), alt: f.name, title: f.name, loading: "lazy" })
-			: el("div", { class: "file", title: "The browser cannot show this format" }, f.name)),
-		result.total > result.files.length ? el("span", { class: "count" }, `and ${result.total - result.files.length} more`) : null);
+	const result = await request(`/api/photos?${query}&offset=${offset}`);
+	if (offset === 0) box.replaceChildren();
+	box.querySelector(".more")?.remove();
+	box.append(...result.files.map(f => photoTile(f, tag)));
+	const shown = offset + result.files.length;
+	if (result.total > shown)
+		box.append(el("button", { class: "small more", onclick: () => loadPhotos(card, sources, tag, shown) }, `Show more (${result.total - shown} left)`));
+}
+
+function photoTile(file, tag) {
+	const url = api("/api/photo/" + encodeURIComponent(file.key));
+	const tile = el("div", { class: "tile" },
+		file.shown
+			? el("a", { href: url, target: "_blank", title: file.name + " (opens in full size)" },
+				el("img", { src: url, alt: file.name, loading: "lazy" }))
+			: el("div", { class: "file", title: "The browser cannot show this format" }, file.name));
+	if (!tag) return tile;
+
+	const excluded = () => (tag.excluded ?? []).includes(file.key);
+	const button = el("button", { class: "tile-button" });
+	const update = () => {
+		tile.classList.toggle("excluded", excluded());
+		button.textContent = excluded() ? "↺" : "×";
+		button.title = excluded() ? "Give this photo the tag again" : "Take the tag off this photo";
+	};
+	button.addEventListener("click", () => {
+		const list = (tag.excluded ?? []).filter(key => key !== file.key);
+		if (!excluded()) list.push(file.key);
+		tag.excluded = list.length ? list : null;
+		update();
+		changed();
+	});
+	update();
+	tile.append(button);
+	return tile;
 }
 
 // ---------- saving ----------

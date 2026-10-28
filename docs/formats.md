@@ -111,6 +111,13 @@ Written by `haru-tags vocab`, which replaces their content on every run (the mod
 | `raw_tag` | primary key: a `raw_tags.tag` value as the analysis step stored it |
 | `tag` | references `vocab_tags.tag` |
 
+**vocab_exclusions** — photos a person took a tag off in the review: they have one of its sources but do not get it. Written by the approval of `vocabulary.yaml` (its `excluded` lists).
+
+| column | |
+|---|---|
+| `tag` | references `vocab_tags.tag` |
+| `key` | `media.key` of the photo; primary key is (`tag`, `key`) |
+
 **vocab_problems** — what the review has to look at.
 
 | column | |

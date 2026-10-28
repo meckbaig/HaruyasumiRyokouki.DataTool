@@ -27,6 +27,9 @@ internal sealed class VocabularyFile
 		public List<string> Sources { get; set; } = [];
 		public int Photos { get; set; }
 		public bool Existing { get; set; }
+
+		/// <summary>Files that do not get the tag although they have a source; null (not written) when none.</summary>
+		public List<string>? Excluded { get; set; }
 	}
 
 	/// <summary>A tag the model dropped; moving it to tags brings it back.</summary>
@@ -49,6 +52,8 @@ internal sealed class VocabularyFile
 		#   sources  the machine tags of the photos: a photo gets the tag if it has any of them
 		#   photos   how many photos get it
 		#   existing true: the site has this tag already, it is not created again
+		#   excluded photos that do not get the tag although they have a source (file names without
+		#            extension); only written when there are any
 		#
 		# Change names and aliases, delete an entry, move sources from one tag to another, or move an
 		# entry from "dropped" back to "tags" (give it slug and en).
@@ -154,6 +159,7 @@ internal static class YamlText
 	private static readonly ISerializer Serializer = new SerializerBuilder()
 		.WithNamingConvention(UnderscoredNamingConvention.Instance)
 		.WithEventEmitter(next => new ShortListsOnOneLine(next))
+		.ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
 		.Build();
 
 	internal static readonly IDeserializer Deserializer = new DeserializerBuilder()

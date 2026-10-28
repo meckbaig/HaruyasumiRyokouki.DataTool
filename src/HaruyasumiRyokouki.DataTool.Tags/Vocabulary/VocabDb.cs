@@ -47,6 +47,11 @@ internal static class VocabDb
 		  file_sha256 TEXT NOT NULL,
 		  approved_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS vocab_exclusions (
+		  tag TEXT NOT NULL REFERENCES vocab_tags(tag),
+		  key TEXT NOT NULL,
+		  PRIMARY KEY (tag, key)
+		);
 		CREATE TABLE IF NOT EXISTS vocab_translations (
 		  id                INTEGER PRIMARY KEY CHECK (id = 1),
 		  vocabulary_sha256 TEXT NOT NULL,
@@ -62,7 +67,7 @@ internal static class VocabDb
 	{
 		using var transaction = connection.BeginTransaction();
 		// A new vocabulary needs a new review.
-		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
+		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_exclusions; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
 
 		foreach (var tag in tags)
 		{
@@ -119,13 +124,13 @@ internal static class VocabDb
 
 		using var transaction = connection.BeginTransaction();
 		// A new vocabulary needs new translations.
-		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags;");
+		Execute(connection, "DELETE FROM vocab_translations; DELETE FROM vocab_approval; DELETE FROM vocab_exclusions; DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags;");
 
 		foreach (var tag in tags)
 		{
 			string name = tag.Labels["en"];
 			long? existing = ExistingId(tag);
-			int photos = tag.Sources.SelectMany(s => keysBySource.GetValueOrDefault(s) ?? []).Distinct().Count();
+			int photos = tag.Sources.SelectMany(s => keysBySource.GetValueOrDefault(s) ?? []).Distinct().Except(tag.Excluded).Count();
 
 			Execute(connection, """
 				INSERT INTO vocab_tags(tag, kind, photos, action, slug, label_en, label_ru, label_ja, existing_id)
@@ -139,6 +144,8 @@ internal static class VocabDb
 						("$tag", name), ("$language", language), ("$text", text));
 			foreach (string source in tag.Sources)
 				Execute(connection, "INSERT INTO vocab_sources(raw_tag, tag) VALUES ($raw, $tag)", ("$raw", source), ("$tag", name));
+			foreach (string key in tag.Excluded.Distinct())
+				Execute(connection, "INSERT INTO vocab_exclusions(tag, key) VALUES ($tag, $key)", ("$tag", name), ("$key", key));
 		}
 
 		Execute(connection, "INSERT INTO vocab_approval(id, file_sha256, approved_at) VALUES (1, $hash, $at)",
@@ -283,6 +290,16 @@ internal static class VocabDb
 					tag.Keys.Add(reader.GetString(1));
 		}
 
+		// Photos a person took the tag off in the review.
+		using (var command = connection.CreateCommand())
+		{
+			command.CommandText = "SELECT tag, key FROM vocab_exclusions";
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+				if (tags.TryGetValue(reader.GetString(0), out var tag))
+					tag.Keys.Remove(reader.GetString(1));
+		}
+
 		return tags.Values.ToList();
 	}
 
@@ -307,7 +324,7 @@ internal static class VocabDb
 /// <summary>A tag of the approved vocabulary, as the steps that write to the site see it.</summary>
 /// <param name="Labels">Main label per language: en, and ru and ja once translated (tags the site has already are not).</param>
 /// <param name="ExistingId">Id of the tag on the site, when the vocab step matched one.</param>
-/// <param name="Keys">Files that get the tag.</param>
+/// <param name="Keys">Files that get the tag: those with any of its sources, except the ones excluded in the review.</param>
 internal sealed record ApprovedTag(string Slug, Dictionary<string, string> Labels, List<TagText> Aliases, int? ExistingId, HashSet<string> Keys);
 
 /// <summary>A tag of the vocabulary: the entries merged into it and the keep-or-drop decision.</summary>

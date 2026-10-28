@@ -13,8 +13,9 @@ internal static class VocabularyCheck
 	/// <summary>A tag of the file with the line it starts on.</summary>
 	/// <param name="Labels">Main label per language: only en in vocabulary.yaml, en, ru and ja in translations.yaml.</param>
 	/// <param name="Aliases">Aliases per language, with an entry for every language of the file.</param>
+	/// <param name="Excluded">Files that do not get the tag although they have a source.</param>
 	public sealed record Tag(int Line, string Slug, Dictionary<string, string> Labels, Dictionary<string, List<string>> Aliases,
-		List<string> Sources, string Kind, bool Existing);
+		List<string> Sources, string Kind, bool Existing, List<string> Excluded);
 
 	/// <summary>A problem in the file. Errors block the approval, warnings are only shown.</summary>
 	public sealed record Issue(int Line, string? Slug, string Message, bool IsError);
@@ -102,7 +103,7 @@ internal static class VocabularyCheck
 				_ => []
 			});
 			tags.Add(new Tag(line, Scalar(map, "slug")?.Trim() ?? "", labels, aliases, Strings(Child(map, "sources")),
-				Scalar(map, "kind") ?? "tag", Scalar(map, "existing") is "true" or "True"));
+				Scalar(map, "kind") ?? "tag", Scalar(map, "existing") is "true" or "True", Strings(Child(map, "excluded"))));
 		}
 
 		return tags;

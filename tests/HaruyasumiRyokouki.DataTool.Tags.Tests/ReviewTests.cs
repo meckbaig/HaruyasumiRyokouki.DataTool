@@ -139,6 +139,28 @@ public sealed class ReviewTests : IDisposable
 	}
 
 	[Fact]
+	public void A_photo_taken_off_a_tag_does_not_get_it()
+	{
+		var (workspace, db) = AnalysedWorkspace();
+		using var _ = db;
+		var file = VocabularyFile.Read(workspace.VocabularyPath);
+		Assert.DoesNotContain("  excluded:", file.Render([]));   // written only when there is something
+
+		file.Tags[0].Excluded = ["a"];
+		File.WriteAllText(workspace.VocabularyPath, file.Render([]));
+		Assert.Contains("excluded: [a]", File.ReadAllText(workspace.VocabularyPath));
+
+		var review = new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, TextWriter.Null);
+		Assert.Equal("ok", review.Run(db, ReviewStep.Mode.Approve, new StepReport("review")));
+
+		var shop = VocabDb.ReadApproved(db).Single(t => t.Slug == "shop");
+		Assert.Empty(shop.Keys);
+		using var command = db.CreateCommand();
+		command.CommandText = "SELECT photos FROM vocab_tags WHERE slug = 'shop'";
+		Assert.Equal(0L, command.ExecuteScalar());
+	}
+
+	[Fact]
 	public async Task The_review_page_shows_the_problems_and_approves_like_the_terminal()
 	{
 		var (workspace, db) = AnalysedWorkspace();

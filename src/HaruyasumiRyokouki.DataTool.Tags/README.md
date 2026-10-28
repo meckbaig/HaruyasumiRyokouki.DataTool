@@ -74,7 +74,7 @@ Every answer is cached in `cache/llm/` by a hash of the request, so a run stoppe
 
 ## Reviewing the vocabulary
 
-`vocabulary.yaml` is the person's part: one English tag per entry with its aliases, `sources` (the machine tags that put it on a photo) and the number of photos, the tags the model dropped in a separate list with the reason, and the problems the checks found at the top. Names and aliases can be changed, tags deleted, sources moved between tags, and dropped tags moved back.
+`vocabulary.yaml` is the person's part: one English tag per entry with its aliases, `sources` (the machine tags that put it on a photo) and the number of photos, the tags the model dropped in a separate list with the reason, and the problems the checks found at the top. Names and aliases can be changed, tags deleted, sources moved between tags, and dropped tags moved back. A photo can be taken off a tag: its key goes into the tag's `excluded` list, and `assign` does not put the tag on it although the photo has one of the sources.
 
 `review --ui` (what `haru-data review` starts) shows the same on a page in the browser: a card per tag with its photos, the problems while editing, Save and Approve. A small web server on `127.0.0.1` serves it with a random token in the address, writes the edits into the same YAML file and approves through the same code as `--approve`; it stops after the approval or on Ctrl+C. Photos in formats a browser cannot show (HEIC, TIFF) are listed by name; videos show their frame.
 

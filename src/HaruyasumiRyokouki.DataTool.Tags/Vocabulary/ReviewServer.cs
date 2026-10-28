@@ -76,7 +76,8 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 				approved.TrySetResult(true);
 			return (object)result;
 		}));
-		app.MapGet("/api/photos", (HttpRequest request) => Locked(() => Photos(request.Query["source"].Where(s => s is not null).Select(s => s!).ToList())));
+		app.MapGet("/api/photos", (HttpRequest request, int? offset) =>
+			Locked(() => Photos(request.Query["source"].Where(s => s is not null).Select(s => s!).ToList(), offset ?? 0)));
 		app.MapGet("/api/photo/{key}", (string key) => Locked(() => Photo(key)));
 
 		await app.StartAsync(cancellationToken);
@@ -153,9 +154,10 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 			.ToList();
 
 		var keysBySource = KeysBySource();
-		int Photos(IEnumerable<string> sources) => sources.SelectMany(s => keysBySource.GetValueOrDefault(s) ?? []).Distinct().Count();
+		int Photos(IEnumerable<string> sources, IEnumerable<string>? excluded = null)
+			=> sources.SelectMany(s => keysBySource.GetValueOrDefault(s) ?? []).Distinct().Except(excluded ?? []).Count();
 		return new CheckResult(issues,
-			model.Tags?.Select(t => Photos(t.Sources)).ToList() ?? [],
+			model.Tags?.Select(t => Photos(t.Sources, t.Excluded)).ToList() ?? [],
 			model.Dropped?.Select(d => Photos(d.Sources)).ToList() ?? []);
 	}
 
@@ -222,8 +224,8 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 		=> AnalysisData.ReadRawTags(connection).GroupBy(r => r.Tag, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.Select(r => r.Key).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
 
-	/// <summary>Up to 24 files with any of the sources, and their total count.</summary>
-	private object Photos(List<string> sources)
+	/// <summary>A page of 24 files with any of the sources, from <paramref name="offset"/>, and their total count.</summary>
+	private object Photos(List<string> sources, int offset)
 	{
 		var keysBySource = KeysBySource();
 		var keys = sources.SelectMany(s => keysBySource.GetValueOrDefault(s) ?? []).Distinct().Order(StringComparer.Ordinal).ToList();
@@ -231,7 +233,7 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 		return new
 		{
 			total = keys.Count,
-			files = keys.Take(24).Where(media.ContainsKey).Select(k => new
+			files = keys.Skip(offset).Take(24).Where(media.ContainsKey).Select(k => new
 			{
 				key = k,
 				name = Path.GetFileName(media[k].Path),

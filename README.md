@@ -129,7 +129,7 @@ haru-data review
 This opens a page in your browser (the terminal shows its address in case it does not open by itself; the page works only on this computer). The page explains at the top what to do. In short:
 
 - Every card is a tag that goes to the site. The list is in English only: translations are made after your check, so nothing you delete is translated.
-- Press **Photos** on a card to see the photos that get the tag. This is the quickest way to understand a tag the model made up.
+- Press **Photos** on a card to see the photos that get the tag. This is the quickest way to understand a tag the model made up. A photo that got the tag by mistake: press **×** on it, and it will not get this tag (**↺** gives it back). Click a photo to see it in full size; **Show more** shows the rest.
 - Rename a tag in its name field, press **Delete** on a useless one, or **Bring back** a tag the model threw away (at the bottom of the page).
 - "Machine tags" on a card are what the vision model wrote on the photos; a photo gets the tag if it has any of them. **→** moves one to another tag, **×** removes it.
 - Problems appear at the top and on the cards while you edit: red ones must be fixed, yellow ones are only hints. You may also change nothing.
