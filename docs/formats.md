@@ -75,3 +75,32 @@ Each app creates its tables on first use and writes only its own row. An app ref
 | `model` | Hugging Face id of the encoder; one model per workspace |
 | `dim` | vector length (768 for the site's model) |
 | `vector` | `dim` little-endian float32, L2-normalized |
+
+### Owner: tags (version 1)
+
+Written by `haru-tags vocab`, which replaces their content on every run. The model answers come from `cache/llm/`, so a rerun is cheap.
+
+**vocab_tags** — the vocabulary: one row per final tag.
+
+| column | |
+|---|---|
+| `tag` | primary key: English display name chosen by the model, lower case; the base of the slug |
+| `kind` | `tag` for a general tag; for a name `landmark`, `place`, `brand`, `franchise`, `character` or `name` |
+| `photos` | number of files with any of its sources |
+| `action` | `keep` or `drop` |
+| `reason` | why the model dropped it; NULL when kept |
+
+**vocab_sources** — which raw tags make up a vocabulary tag; the link from a photo to its final tags.
+
+| column | |
+|---|---|
+| `raw_tag` | primary key: a `raw_tags.tag` value as the analysis step stored it |
+| `tag` | references `vocab_tags.tag` |
+
+**vocab_problems** — what the review has to look at.
+
+| column | |
+|---|---|
+| `kind` | where it comes from, such as `model` for an answer the code had to correct |
+| `subject` | the tag it is about, or NULL |
+| `message` | what is wrong |

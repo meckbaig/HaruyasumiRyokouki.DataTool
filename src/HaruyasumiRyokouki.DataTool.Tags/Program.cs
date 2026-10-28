@@ -1,6 +1,10 @@
+using System.ClientModel;
 using System.CommandLine;
 using HaruyasumiRyokouki.DataTool.Common;
 using HaruyasumiRyokouki.DataTool.Tags;
+using HaruyasumiRyokouki.DataTool.Tags.Llm;
+using HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
+using Microsoft.Data.Sqlite;
 
 return Cli.Build().Parse(args).Invoke();
 
@@ -28,7 +32,55 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			status.SetAction(parse => Run(parse, Status));
 			root.Subcommands.Add(status);
 
+			var vocab = new Command("vocab", "build the tag vocabulary from the machine tags with the model in [usage] vocabulary");
+			vocab.SetAction((parse, cancellationToken) => RunStepAsync(parse, "vocab", async (workspace, db, report) =>
+			{
+				var chat = new ChatService(LlmProvider.FromWorkspace(workspace, "vocabulary"), workspace.LlmCacheDir);
+				await new VocabStep(chat, Console.Out).RunAsync(db, report, cancellationToken);
+			}));
+			root.Subcommands.Add(vocab);
+
 			return root;
+		}
+
+		/// <summary>
+		/// Runs a step with its report. A problem the user has to fix, a failed model or API call and
+		/// Ctrl+C all end in a report with status error and exit code 1; work saved so far stays saved.
+		/// </summary>
+		private static async Task<int> RunStepAsync(ParseResult parse, string step, Func<Workspace, SqliteConnection, StepReport, Task> run)
+		{
+			Workspace workspace;
+			try
+			{
+				workspace = Workspace.Open(parse.GetValue(WorkspaceOption)!);
+			}
+			catch (WorkspaceException ex)
+			{
+				Console.Error.WriteLine("error: " + ex.Message);
+				return ExitCodes.Error;
+			}
+
+			var report = new StepReport(step);
+			try
+			{
+				using var db = WorkDb.Open(workspace);
+				await run(workspace, db, report);
+			}
+			catch (OperationCanceledException)
+			{
+				Console.Error.WriteLine("interrupted, run the step again to continue");
+				report.Message = "interrupted";
+				return report.Finish(workspace, "error");
+			}
+			catch (Exception ex) when (ex is WorkspaceException or InvalidOperationException or ClientResultException or HttpRequestException)
+			{
+				Console.Error.WriteLine("error: " + ex.Message);
+				report.Error(ex.Message);
+				return report.Finish(workspace);
+			}
+
+			Console.WriteLine($"{step}: " + string.Join(", ", report.Counts.Select(c => $"{c.Key} {c.Value}")));
+			return report.Finish(workspace);
 		}
 
 		/// <summary>Opens the workspace and turns problems the user has to fix into one line and exit code 1.</summary>
