@@ -64,6 +64,40 @@ internal sealed class VocabStep(ChatService chat, BackendApi api, Translator tra
 			output.WriteLine($"problem: {(problem.Tag is null ? "" : problem.Tag + ": ")}{problem.Message}");
 	}
 
+	/// <summary>
+	/// What a run would send, without sending anything: requests and rough input tokens to the
+	/// vocabulary model, and translation requests to the backend's AI. Answers already in the
+	/// cache are not paid again, so a rerun costs less than this.
+	/// </summary>
+	public static void Estimate(SqliteConnection connection, LlmProvider provider, TextWriter output)
+	{
+		AnalysisData.Require(connection);
+		var entries = VocabEntry.Build(AnalysisData.ReadRawTags(connection));
+		if (entries.Count == 0)
+		{
+			output.WriteLine("vocab estimate: no tags yet, nothing to send");
+			return;
+		}
+
+		var groups = entries.Select(e =>
+		{
+			var group = new TagGroup(e.Text);
+			group.Keys.UnionWith(e.Keys);
+			return group;
+		}).ToList();
+		string dedupe = Dedupe.Prompt + Dedupe.BuildMessage(entries, DuplicateHints.Build(groups, AnalysisData.ReadVectors(connection)));
+		// The filter asks about the merged tags; the entries are an upper bound.
+		var batches = entries.Chunk(Filter.BatchSize).ToList();
+		long filterChars = batches.Sum(b => Filter.Prompt.Length + Filter.BuildMessage(b.Select(e => new Filter.Item(e.Text, e.Keys.Count, null))).Length);
+
+		// About 4 characters per token for English text in JSON.
+		long inputTokens = (dedupe.Length + filterChars) / 4;
+		output.WriteLine($"vocab estimate for {provider.Name} ({provider.Model}):");
+		output.WriteLine($"  {1 + batches.Count} requests, about {inputTokens:N0} input tokens; the answers are shorter, thinking models add their reasoning");
+		output.WriteLine($"  up to {entries.Count} translation requests to the backend's AI (tags the site already has are not translated)");
+		output.WriteLine("  answers in cache/llm from an earlier run are not sent again");
+	}
+
 	private async Task<List<VocabTag>> MergeDuplicatesAsync(
 		SqliteConnection connection, List<VocabEntry> entries, List<string> warnings, CancellationToken cancellationToken)
 	{

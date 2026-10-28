@@ -145,3 +145,15 @@ Written by the haru-tags steps that write to the site: what the site calls the t
 | `media_file_id` | `media_files.id` of the site |
 | `file_name` | the name on the site, often with another extension (`.webp`) |
 | `type` | `Image` or `Video`, as the site stores it |
+
+### Owner: run (version 1)
+
+Written by `haru-data run`. The vocabulary step and the steps that write to the site run again only when their input changed since they last finished; the input is summed up as a fingerprint of the tables of the other owners.
+
+**run_steps** — one row per such step after it finished without errors.
+
+| column | |
+|---|---|
+| `step` | primary key: step name |
+| `fingerprint` | short hash of the input: the machine tags for `vocab`, the approved file for `push-tags`, the file keys for `upload` and `sync`, the approved file and the site ids for `assign`, the vectors and the site ids for `push-embeddings` |
+| `finished_at` | time it finished, UTC |

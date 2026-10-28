@@ -36,8 +36,15 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			status.SetAction(parse => Run(parse, Status));
 			root.Subcommands.Add(status);
 
+			var estimate = new Option<bool>("--estimate") { Description = "print how many requests and tokens a run would send, send nothing" };
 			var vocab = new Command("vocab", "build the tag vocabulary from the machine tags with the model in [usage] vocabulary");
-			vocab.SetAction((parse, cancellationToken) => RunStepAsync(parse, "vocab", async (workspace, db, report) =>
+			vocab.Options.Add(estimate);
+			vocab.SetAction((parse, cancellationToken) => parse.GetValue(estimate) ? Task.FromResult(Run(parse, workspace =>
+			{
+				using var db = WorkDb.Open(workspace);
+				VocabStep.Estimate(db, LlmProvider.FromWorkspace(workspace, "vocabulary"), Console.Out);
+				return ExitCodes.Ok;
+			})) : RunStepAsync(parse, "vocab", async (workspace, db, report) =>
 			{
 				var chat = new ChatService(LlmProvider.FromWorkspace(workspace, "vocabulary"), workspace.LlmCacheDir);
 				using var api = BackendApi.FromWorkspace(workspace);

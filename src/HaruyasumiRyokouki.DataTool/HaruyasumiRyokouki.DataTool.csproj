@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		haru-data: the entry point. Creates a workspace, runs the steps of haru-analysis and
+		haru-tags as processes in their order, stops where a person is needed, shows the status.
+	-->
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>HaruyasumiRyokouki.DataTool</RootNamespace>
+		<AssemblyName>haru-data</AssemblyName>
+		<InvariantGlobalization>true</InvariantGlobalization>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="HaruyasumiRyokouki.DataTool.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.CommandLine" Version="2.0.14" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\HaruyasumiRyokouki.DataTool.Common\HaruyasumiRyokouki.DataTool.Common.csproj" />
+		<!-- Not used as a library: builds haru-tags next to haru-data, which starts it as a process. -->
+		<ProjectReference Include="..\HaruyasumiRyokouki.DataTool.Tags\HaruyasumiRyokouki.DataTool.Tags.csproj" />
+	</ItemGroup>
+
+</Project>

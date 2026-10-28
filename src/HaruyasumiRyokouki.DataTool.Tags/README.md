@@ -4,7 +4,7 @@ The part of the data tool that talks to the site: it turns the machine tags of `
 
 ```
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- status --workspace my-trip
-dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- vocab  --workspace my-trip
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- vocab  --workspace my-trip [--estimate]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- review --workspace my-trip [--check | --approve]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-tags --workspace my-trip [--yes]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- upload --workspace my-trip [--yes]
@@ -40,7 +40,7 @@ HARU_CONNECTION=Host=...;Database=...;Username=...;Password=...   # reading medi
 
 ## Building the vocabulary
 
-`vocab` turns the machine tags of all photos into a vocabulary in `work.sqlite` (tables in [docs/formats.md](../../docs/formats.md)). It runs in three parts, chosen after testing several models (see [docs/models.md](../../docs/models.md)):
+`vocab --estimate` prints how many requests and roughly how many input tokens a run would send, and sends nothing; `haru-data run` shows it and asks before the paid run. `vocab` turns the machine tags of all photos into a vocabulary in `work.sqlite` (tables in [docs/formats.md](../../docs/formats.md)). It runs in three parts, chosen after testing several models (see [docs/models.md](../../docs/models.md)):
 
 1. **Mechanical clean-up**, no model: case and separators, a plural merged into its singular when both occur. Names from the vision model keep their spelling.
 2. **Finding duplicates**: one request with the whole list, because "sakura" and "cherry blossom" can be far apart. The model answers only with merges and spelling fixes; everything it does not mention stays. Pairs of tags whose photos look alike but rarely appear together are passed as hints. The code checks the answer: an entry the model invents is ignored, a plural or singular form is matched to the entry, an entry in two groups stays in the first.
