@@ -109,7 +109,7 @@ haru-data run
 
 What happens:
 
-1. The tool looks at every photo and video on your computer. This is the long part: about 2 hours per 4,000 photos. The screen shows the progress (`tag 120/4200`). The computer must stay on; if you interrupt it with Ctrl+C or it is closed, just run `haru-data run` again later, finished photos are not done again.
+1. The tool looks at every photo and video in the photo folder (`--source` from step 1, nothing else) with the vision model in LM Studio. This is the long part: about 2 hours per 4,000 photos. The screen shows the progress (`tag 120/4200`). The computer must stay on; if you interrupt it with Ctrl+C or it is closed, just run `haru-data run` again later, finished photos are not done again.
 2. Then it is going to ask the cloud model (DeepSeek) to turn the tags of all photos into one tag list. This costs money, so it first prints how much it will send and asks:
 
    ```
