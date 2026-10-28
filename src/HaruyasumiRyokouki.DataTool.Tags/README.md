@@ -31,6 +31,10 @@ HARU_CONNECTION=Host=...;Database=...;Username=...;Password=...   # only for wri
 1. **Mechanical clean-up**, no model: case and separators, a plural merged into its singular when both occur. Names from the vision model keep their spelling.
 2. **Finding duplicates**: one request with the whole list, because "sakura" and "cherry blossom" can be far apart. The model answers only with merges and spelling fixes; everything it does not mention stays. Pairs of tags whose photos look alike but rarely appear together are passed as hints. The code checks the answer: an entry the model invents is ignored, a plural or singular form is matched to the entry, an entry in two groups stays in the first.
 3. **Keeping or dropping**, in batches of 150 tags: the model decides for each tag whether a visitor could search for it, with names judged by the evidence the vision model gave. A tag without a decision is kept.
+4. **Translations** through the site's own `POST /v1/tags/completion`: the same prompt the admin uses for a single tag, with whatever model the backend is configured with. The English name chosen in step 2 stays the main English label; the backend's other English wording and the merged variants ("sakura" for "cherry blossom") become English aliases. A tag that is already on the site (same slug, or its name is a label or an alias there) takes the site's labels and is not created again. Translations are cached like the model answers.
+5. **Checks** without a model, so problems show up in the review rather than as a rejected request later: the backend's rules for a new tag (a slug, one label per language, no text twice in one tag, no alias equal to a label), all three languages present, and no two tags with the same label in a language. Last time the old tool produced 56 such pairs, like "магазин" for both shop and store.
+
+The result goes to `work.sqlite` and to `vocabulary.yaml` in the workspace, with the problems listed at the top of the file. Names often get the same Latin spelling in every language, which the backend does not accept; such a tag needs a Russian or Japanese label written by hand.
 
 The model comes from `[usage] vocabulary`; it has to be a strong one, local models were not good enough. For DeepSeek:
 
@@ -45,7 +49,12 @@ max_tokens = 200000                # reasoning takes tens of thousands of tokens
 
 [usage]
 vocabulary = "deepseek"
+
+[vocabulary]
+translate_concurrency = 4          # parallel requests to /v1/tags/completion; a free tier of the backend's model allows few per minute
 ```
+
+The backend must be running for translations; its address is `[backend] api` (or `HARU_API`), the admin's login goes into `HARU_USER` and `HARU_PASSWORD` in `.env`. The step checks the connection before it asks the model anything.
 
 Every answer is cached in `cache/llm/` by a hash of the request, so a run stopped by an error or Ctrl+C does not pay again. An answer that cannot be parsed, or that is clearly incomplete, is asked once more and never cached. The report counts requests and tokens.
 

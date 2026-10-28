@@ -6,9 +6,10 @@ namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 
 /// <summary>
 /// Step vocab: from the raw tags and names of all photos to a vocabulary. Mechanical normalization
-/// first, then one request to find duplicates in the whole list, then keep-or-drop in batches.
+/// first, then one request to find duplicates in the whole list, keep-or-drop in batches,
+/// translations through the backend, checks, and vocabulary.yaml for the review.
 /// </summary>
-internal sealed class VocabStep(ChatService chat, TextWriter output)
+internal sealed class VocabStep(ChatService chat, BackendApi api, Translator translator, string vocabularyPath, TextWriter output)
 {
 	public async Task RunAsync(SqliteConnection connection, StepReport report, CancellationToken cancellationToken = default)
 	{
@@ -25,25 +26,42 @@ internal sealed class VocabStep(ChatService chat, TextWriter output)
 			return;
 		}
 
+		// Before the model is paid: translations need the backend, and the site's tags are matched.
+		await api.EnsureReachableAsync(cancellationToken);
+		var existing = await api.GetTagsAsync(cancellationToken);
+		report.Count("site tags", existing.Count);
+
 		var warnings = new List<string>();
 		var tags = await MergeDuplicatesAsync(connection, entries, warnings, cancellationToken);
 		report.Count("tags", tags.Count);
 		await DecideKeepOrDropAsync(tags, warnings, cancellationToken);
 
-		var problems = warnings.Select(w => ("model", (string?)null, w)).ToList();
+		Translator.MatchExisting(tags, existing);
+		var translationErrors = new List<string>();
+		await translator.TranslateAsync(tags, translationErrors, cancellationToken);
+		foreach (string error in translationErrors)
+			report.Error(error);
+
+		var problems = warnings.Select(w => new Checks.Problem("model", null, w))
+			.Concat(translationErrors.Select(e => new Checks.Problem("translation", null, e)))
+			.Concat(Checks.Run(tags))
+			.ToList();
 		VocabDb.Save(connection, tags, problems);
+		VocabularyFile.From(tags).Write(vocabularyPath, problems);
 
 		report.Count("kept", tags.Count(t => t.Keep));
 		report.Count("dropped", tags.Count(t => !t.Keep));
+		report.Count("already on the site", tags.Count(t => t.Keep && t.ExistingId is not null));
+		report.Count("problems", problems.Count);
 		report.Count("warnings", warnings.Count);
 		report.Count("llm requests", chat.Usage.Requests);
 		report.Count("llm cached answers", chat.Usage.CachedAnswers);
 		report.Count("input tokens", chat.Usage.InputTokens);
 		report.Count("output tokens", chat.Usage.OutputTokens);
 		report.Count("reasoning tokens", chat.Usage.ReasoningTokens);
-		report.Message = chat.Describe();
-		foreach (string warning in warnings)
-			output.WriteLine("warning: " + warning);
+		report.Message = $"{chat.Describe()}; review {vocabularyPath}";
+		foreach (var problem in problems)
+			output.WriteLine($"problem: {(problem.Tag is null ? "" : problem.Tag + ": ")}{problem.Message}");
 	}
 
 	private async Task<List<VocabTag>> MergeDuplicatesAsync(

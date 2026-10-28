@@ -6,6 +6,7 @@ What the apps of the data tool exchange: the workspace folder, step reports and 
 
 ```
 my-trip/
+  vocabulary.yaml  the vocabulary for review (haru-tags vocab)
   haru-data.toml   settings, no secrets
   .env             secrets (optional, environment variables work too)
   work.sqlite      state of all steps
@@ -76,7 +77,7 @@ Each app creates its tables on first use and writes only its own row. An app ref
 | `dim` | vector length (768 for the site's model) |
 | `vector` | `dim` little-endian float32, L2-normalized |
 
-### Owner: tags (version 1)
+### Owner: tags (version 2)
 
 Written by `haru-tags vocab`, which replaces their content on every run. The model answers come from `cache/llm/`, so a rerun is cheap.
 
@@ -89,6 +90,17 @@ Written by `haru-tags vocab`, which replaces their content on every run. The mod
 | `photos` | number of files with any of its sources |
 | `action` | `keep` or `drop` |
 | `reason` | why the model dropped it; NULL when kept |
+| `slug` | slug for the site, from the English name; NULL for dropped tags, empty when the name has no Latin letters |
+| `label_en`, `label_ru`, `label_ja` | main label per language; NULL when missing |
+| `existing_id` | id of the same tag on the site; such a tag is not created again |
+
+**vocab_aliases** — search aliases of a vocabulary tag.
+
+| column | |
+|---|---|
+| `tag` | references `vocab_tags.tag` |
+| `language` | `en`, `ru` or `ja` |
+| `text` | the alias; primary key is (`tag`, `language`, `text`) |
 
 **vocab_sources** — which raw tags make up a vocabulary tag; the link from a photo to its final tags.
 
@@ -101,6 +113,6 @@ Written by `haru-tags vocab`, which replaces their content on every run. The mod
 
 | column | |
 |---|---|
-| `kind` | where it comes from, such as `model` for an answer the code had to correct |
+| `kind` | `model` (an answer the code had to correct), `translation` (the backend could not translate), `slug`, `duplicate text` (a text twice in one tag, which the backend rejects), `same label` (two tags with one label in a language) |
 | `subject` | the tag it is about, or NULL |
 | `message` | what is wrong |

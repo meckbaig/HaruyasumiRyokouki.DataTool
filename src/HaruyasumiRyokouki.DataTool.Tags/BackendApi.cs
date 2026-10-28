@@ -29,6 +29,7 @@ internal sealed class BackendApi : IDisposable
 		_http = new HttpClient(handler ?? new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) })
 		{
 			BaseAddress = new Uri(baseAddress.ToString().TrimEnd('/') + "/"),
+			// A completion is a call to the backend's AI model and may take a while.
 			Timeout = TimeSpan.FromMinutes(2)
 		};
 
@@ -82,6 +83,36 @@ internal sealed class BackendApi : IDisposable
 		return payload?.Items ?? [];
 	}
 
+	/// <summary>
+	/// POST /v1/tags/completion: the backend's AI drafts translations into en, ru and ja and search
+	/// aliases for one tag. Nothing is saved on the site. A busy or rate-limited model (429, 5xx) is
+	/// asked again after a growing pause, since free tiers of cloud models limit requests per minute.
+	/// </summary>
+	public async Task<TagDraft> CompleteTagAsync(string tag, CancellationToken cancellationToken = default)
+	{
+		for (int attempt = 1; ; attempt++)
+		{
+			var response = await _http.PostAsJsonAsync("v1/tags/completion", new { tag }, Json, cancellationToken);
+			bool retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
+			if (retryable && attempt < RetryAttempts)
+			{
+				await Task.Delay(RetryDelay * Math.Pow(2, attempt - 1), cancellationToken);
+				continue;
+			}
+
+			await ThrowIfFailedAsync(response, $"translating tag '{tag}'");
+			var payload = await response.Content.ReadFromJsonAsync<CompletionEnvelope>(Json, cancellationToken)
+				?? throw new InvalidOperationException($"Empty answer when translating tag '{tag}'");
+			return payload.Tag;
+		}
+	}
+
+	/// <summary>Attempts of a request the backend's AI could not serve right now.</summary>
+	public int RetryAttempts { get; init; } = 5;
+
+	/// <summary>Pause before the first retry; it doubles every time.</summary>
+	public TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(5);
+
 	/// <summary>POST /v1/tags: creates a tag and returns its id.</summary>
 	public async Task<int> AddTagAsync(string slug, IEnumerable<TagText> translations, IEnumerable<TagText> aliases,
 		CancellationToken cancellationToken = default)
@@ -124,6 +155,7 @@ internal sealed class BackendApi : IDisposable
 
 	public void Dispose() => _http.Dispose();
 
+	private sealed record CompletionEnvelope(TagDraft Tag);
 	private sealed record AddTagEnvelope(AddedTag Tag);
 	private sealed record AddedTag(int Id, string Slug);
 	private sealed record GetTagsEnvelope(List<ExistingTag> Items);
@@ -132,6 +164,9 @@ internal sealed class BackendApi : IDisposable
 
 /// <summary>A language and a text, as in the backend's TagTranslationDto.</summary>
 internal sealed record TagText(string LanguageCode, string Text);
+
+/// <summary>Translations and aliases the backend's AI drafted for a tag (TagDto without id).</summary>
+internal sealed record TagDraft(string? Slug, List<TagText>? Translations, List<TagText>? Aliases);
 
 /// <summary>An item of GET /v1/tags.</summary>
 internal sealed record ExistingTag(int Id, string Slug, List<TagText>? Translations, List<TagText>? Aliases);

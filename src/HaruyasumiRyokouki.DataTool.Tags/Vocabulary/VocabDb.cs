@@ -10,15 +10,26 @@ namespace HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 internal static class VocabDb
 {
 	public const string Owner = "tags";
-	public const int SchemaVersion = 1;
+	public const int SchemaVersion = 2;
 
 	private const string Schema = """
 		CREATE TABLE IF NOT EXISTS vocab_tags (
-		  tag     TEXT PRIMARY KEY,
-		  kind    TEXT NOT NULL,
-		  photos  INTEGER NOT NULL,
-		  action  TEXT NOT NULL CHECK (action IN ('keep', 'drop')),
-		  reason  TEXT
+		  tag         TEXT PRIMARY KEY,
+		  kind        TEXT NOT NULL,
+		  photos      INTEGER NOT NULL,
+		  action      TEXT NOT NULL CHECK (action IN ('keep', 'drop')),
+		  reason      TEXT,
+		  slug        TEXT,
+		  label_en    TEXT,
+		  label_ru    TEXT,
+		  label_ja    TEXT,
+		  existing_id INTEGER
+		);
+		CREATE TABLE IF NOT EXISTS vocab_aliases (
+		  tag      TEXT NOT NULL REFERENCES vocab_tags(tag),
+		  language TEXT NOT NULL,
+		  text     TEXT NOT NULL,
+		  PRIMARY KEY (tag, language, text)
 		);
 		CREATE TABLE IF NOT EXISTS vocab_sources (
 		  raw_tag TEXT PRIMARY KEY,
@@ -35,22 +46,31 @@ internal static class VocabDb
 	public static void Ensure(SqliteConnection connection) => WorkDb.EnsureOwnSchema(connection, Owner, SchemaVersion, Schema);
 
 	/// <summary>Replaces the vocabulary with a new one in one transaction.</summary>
-	public static void Save(SqliteConnection connection, IEnumerable<VocabTag> tags, IEnumerable<(string Kind, string? Subject, string Message)> problems)
+	public static void Save(SqliteConnection connection, IEnumerable<VocabTag> tags, IEnumerable<Checks.Problem> problems)
 	{
 		using var transaction = connection.BeginTransaction();
-		Execute(connection, "DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
+		Execute(connection, "DELETE FROM vocab_aliases; DELETE FROM vocab_sources; DELETE FROM vocab_tags; DELETE FROM vocab_problems;");
 
 		foreach (var tag in tags)
 		{
-			Execute(connection, "INSERT INTO vocab_tags(tag, kind, photos, action, reason) VALUES ($tag, $kind, $photos, $action, $reason)",
-				("$tag", tag.Name), ("$kind", tag.Kind), ("$photos", tag.Keys.Count), ("$action", tag.Keep ? "keep" : "drop"), ("$reason", tag.Reason));
+			Execute(connection, """
+				INSERT INTO vocab_tags(tag, kind, photos, action, reason, slug, label_en, label_ru, label_ja, existing_id)
+				VALUES ($tag, $kind, $photos, $action, $reason, $slug, $en, $ru, $ja, $existing)
+				""",
+				("$tag", tag.Name), ("$kind", tag.Kind), ("$photos", tag.Keys.Count), ("$action", tag.Keep ? "keep" : "drop"),
+				("$reason", tag.Reason), ("$slug", tag.Keep ? tag.Slug : null), ("$en", tag.Labels.GetValueOrDefault("en")),
+				("$ru", tag.Labels.GetValueOrDefault("ru")), ("$ja", tag.Labels.GetValueOrDefault("ja")), ("$existing", tag.ExistingId));
+			foreach (var (language, list) in tag.Aliases)
+				foreach (string text in list)
+					Execute(connection, "INSERT OR IGNORE INTO vocab_aliases(tag, language, text) VALUES ($tag, $language, $text)",
+						("$tag", tag.Name), ("$language", language), ("$text", text));
 			foreach (string raw in tag.RawTags)
 				Execute(connection, "INSERT INTO vocab_sources(raw_tag, tag) VALUES ($raw, $tag)", ("$raw", raw), ("$tag", tag.Name));
 		}
 
-		foreach (var (kind, subject, message) in problems)
+		foreach (var problem in problems)
 			Execute(connection, "INSERT INTO vocab_problems(kind, subject, message) VALUES ($kind, $subject, $message)",
-				("$kind", kind), ("$subject", subject), ("$message", message));
+				("$kind", problem.Kind), ("$subject", problem.Tag), ("$message", problem.Message));
 
 		transaction.Commit();
 	}
@@ -77,4 +97,16 @@ internal sealed class VocabTag(string name)
 	public HashSet<string> RawTags { get; } = new(StringComparer.Ordinal);
 	public bool Keep { get; set; } = true;
 	public string? Reason { get; set; }
+
+	/// <summary>Slug for the site, from the English name; empty when the name has no Latin letters.</summary>
+	public string Slug => TagNormalizer.Slugify(Name);
+
+	/// <summary>Main label per language: en, ru, ja.</summary>
+	public Dictionary<string, string> Labels { get; } = [];
+
+	/// <summary>Search aliases per language.</summary>
+	public Dictionary<string, List<string>> Aliases { get; } = [];
+
+	/// <summary>Id of the same tag already on the site; such a tag is not created again.</summary>
+	public int? ExistingId { get; set; }
 }

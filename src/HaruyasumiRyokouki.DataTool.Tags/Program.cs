@@ -6,6 +6,8 @@ using HaruyasumiRyokouki.DataTool.Tags.Llm;
 using HaruyasumiRyokouki.DataTool.Tags.Vocabulary;
 using Microsoft.Data.Sqlite;
 
+// Labels in Russian and Japanese must not turn into question marks in a Windows console.
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 return Cli.Build().Parse(args).Invoke();
 
 namespace HaruyasumiRyokouki.DataTool.Tags
@@ -36,7 +38,10 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			vocab.SetAction((parse, cancellationToken) => RunStepAsync(parse, "vocab", async (workspace, db, report) =>
 			{
 				var chat = new ChatService(LlmProvider.FromWorkspace(workspace, "vocabulary"), workspace.LlmCacheDir);
-				await new VocabStep(chat, Console.Out).RunAsync(db, report, cancellationToken);
+				using var api = BackendApi.FromWorkspace(workspace);
+				// The backend's AI may be a free tier with a low request rate; raise it for a paid one.
+				var translator = new Translator(api, workspace.LlmCacheDir, workspace.GetInt("vocabulary.translate_concurrency") ?? 4, Console.Out);
+				await new VocabStep(chat, api, translator, workspace.VocabularyPath, Console.Out).RunAsync(db, report, cancellationToken);
 			}));
 			root.Subcommands.Add(vocab);
 
