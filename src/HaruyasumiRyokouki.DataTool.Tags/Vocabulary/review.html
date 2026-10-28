@@ -412,7 +412,7 @@ function translationCard(index) {
 					chips(tag.aliases[code], i => { tag.aliases[code].splice(i, 1); changed(true); }),
 					addInput("+ search word", v => { tag.aliases[code].push(v); changed(true); }))));
 	}
-	card.append(grid, el("div", { class: "issues" }));
+	card.append(grid, el("div", { class: "issues" }), el("div", { class: "photos" }));
 	return card;
 }
 
