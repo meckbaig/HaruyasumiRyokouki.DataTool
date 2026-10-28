@@ -8,7 +8,8 @@ cd my-trip
 haru-data doctor                                  # programs, models, servers, secrets
 haru-data run                                     # the steps that are not done
 haru-data status                                  # where the cycle is and what is next
-haru-data review [--check | --approve]            # the file that waits for you: vocabulary, then translations
+haru-data review                                  # the review page in the browser: the tag list, then the translations
+haru-data review --check | --approve              # the same in the terminal, on the YAML files
 haru-data run embed                               # one step, even if it is done
 ```
 

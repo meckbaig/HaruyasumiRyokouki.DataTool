@@ -88,7 +88,8 @@ namespace HaruyasumiRyokouki.DataTool
 
 			var check = new Option<bool>("--check") { Description = "check the edited file that waits for review, with line numbers" };
 			var approve = new Option<bool>("--approve") { Description = "check the file that waits for review and approve it" };
-			var review = new Command("review", "the file that waits for you (vocabulary.yaml, then translations.yaml): summary, --check or --approve");
+			var review = new Command("review",
+				"open the review page in the browser for the file that waits for you (the tag list, then the translations); --check or --approve work in the terminal instead");
 			review.Options.Add(check);
 			review.Options.Add(approve);
 			review.SetAction(parse => Guard(() =>
@@ -97,6 +98,7 @@ namespace HaruyasumiRyokouki.DataTool
 				var arguments = new List<string>();
 				if (parse.GetValue(check)) arguments.Add("--check");
 				if (parse.GetValue(approve)) arguments.Add("--approve");
+				if (arguments.Count == 0) arguments.Add("--ui");
 				return new ProcessLauncher(RepoLayout.Find(), workspace.Root).Run(App.Tags, "review", arguments);
 			}));
 			root.Subcommands.Add(review);

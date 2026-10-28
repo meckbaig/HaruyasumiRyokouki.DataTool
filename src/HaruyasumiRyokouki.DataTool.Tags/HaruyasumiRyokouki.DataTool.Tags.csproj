@@ -16,6 +16,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- The review page: a small local web server (part of the .NET runtime, no package). -->
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+		<EmbeddedResource Include="Vocabulary/review.html" LogicalName="review.html" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<InternalsVisibleTo Include="HaruyasumiRyokouki.DataTool.Tags.Tests" />
 	</ItemGroup>
 

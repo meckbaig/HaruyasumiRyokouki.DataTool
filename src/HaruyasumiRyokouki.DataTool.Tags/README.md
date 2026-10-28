@@ -5,7 +5,7 @@ The part of the data tool that talks to the site: it turns the machine tags of `
 ```
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- status --workspace my-trip
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- vocab  --workspace my-trip [--estimate]
-dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- review --workspace my-trip [--check | --approve]
+dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- review --workspace my-trip [--check | --approve | --ui [--no-browser]]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- translate --workspace my-trip
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- push-tags --workspace my-trip [--yes]
 dotnet run --project src/HaruyasumiRyokouki.DataTool.Tags -- upload --workspace my-trip [--yes]
@@ -75,6 +75,8 @@ Every answer is cached in `cache/llm/` by a hash of the request, so a run stoppe
 ## Reviewing the vocabulary
 
 `vocabulary.yaml` is the person's part: one English tag per entry with its aliases, `sources` (the machine tags that put it on a photo) and the number of photos, the tags the model dropped in a separate list with the reason, and the problems the checks found at the top. Names and aliases can be changed, tags deleted, sources moved between tags, and dropped tags moved back.
+
+`review --ui` (what `haru-data review` starts) shows the same on a page in the browser: a card per tag with its photos, the problems while editing, Save and Approve. A small web server on `127.0.0.1` serves it with a random token in the address, writes the edits into the same YAML file and approves through the same code as `--approve`; it stops after the approval or on Ctrl+C. Photos in formats a browser cannot show (HEIC, TIFF) are listed by name; videos show their frame.
 
 `review` works on the file that waits for a person: `vocabulary.yaml` until it is approved, then `translations.yaml` while the translations wait (below). Its output starts with the name of the file.
 

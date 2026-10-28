@@ -113,12 +113,12 @@ public sealed class ReviewTests : IDisposable
 		Assert.Contains("'shop' (line 3)", ex.Message);
 	}
 
-	[Fact]
-	public async Task Translations_come_after_the_approval_and_wait_for_review_only_with_problems()
+	/// <summary>A workspace with two photos, their machine tags and <see cref="Valid"/> as vocabulary.yaml.</summary>
+	private (Workspace Workspace, SqliteConnection Db) AnalysedWorkspace()
 	{
 		File.WriteAllText(Path.Combine(_root, Workspace.ConfigName), "");
 		var workspace = Workspace.Open(_root);
-		using var db = WorkDb.Open(workspace);
+		var db = WorkDb.Open(workspace);
 		using (var command = db.CreateCommand())
 		{
 			command.CommandText = """
@@ -135,6 +135,59 @@ public sealed class ReviewTests : IDisposable
 			command.ExecuteNonQuery();
 		}
 		File.WriteAllText(workspace.VocabularyPath, Valid);
+		return (workspace, db);
+	}
+
+	[Fact]
+	public async Task The_review_page_shows_the_problems_and_approves_like_the_terminal()
+	{
+		var (workspace, db) = AnalysedWorkspace();
+		using var _ = db;
+		var output = new StringWriter();
+		using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var server = new ReviewServer(workspace, db, output).RunAsync(openBrowser: false, stop.Token);
+
+		string url = "";
+		for (int i = 0; i < 100 && !url.Contains("token="); i++)
+		{
+			await Task.Delay(100);
+			url = System.Text.RegularExpressions.Regex.Match(output.ToString(), @"http://\S+").Value;
+		}
+		string token = url[(url.IndexOf("token=") + 6)..];
+		string root = url[..url.IndexOf("/?")];
+		using var http = new HttpClient();
+
+		Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await http.GetAsync(root + "/api/state")).StatusCode);
+		using var state = System.Text.Json.JsonDocument.Parse(await http.GetStringAsync($"{root}/api/state?token={token}"));
+		Assert.Equal("vocabulary", state.RootElement.GetProperty("stage").GetString());
+		Assert.Equal(2, state.RootElement.GetProperty("tags").GetArrayLength());
+
+		// Both tags named "shop": an error on the second card, named by the other tag, and no approval.
+		string edited = state.RootElement.GetProperty("tags").GetRawText().Replace("\"en\":\"temple\"", "\"en\":\"shop\"");
+		var refused = await http.PostAsync($"{root}/api/approve?token={token}",
+			new StringContent($$"""{"tags": {{edited}}, "dropped": []}""", System.Text.Encoding.UTF8, "application/json"));
+		using (var answer = System.Text.Json.JsonDocument.Parse(await refused.Content.ReadAsStringAsync()))
+		{
+			Assert.False(answer.RootElement.GetProperty("ok").GetBoolean());
+			var issue = answer.RootElement.GetProperty("check").GetProperty("issues")[0];
+			Assert.Equal(1, issue.GetProperty("tag").GetInt32());
+			Assert.Contains("also used by 'shop'", issue.GetProperty("message").GetString());
+		}
+
+		var approved = await http.PostAsync($"{root}/api/approve?token={token}",
+			new StringContent($$"""{"tags": {{state.RootElement.GetProperty("tags").GetRawText()}}, "dropped": []}""", System.Text.Encoding.UTF8, "application/json"));
+		Assert.Contains("\"ok\":true", await approved.Content.ReadAsStringAsync());
+
+		Assert.Equal(ExitCodes.Ok, await server);
+		Assert.Equal(VocabDb.FileSha256(workspace.VocabularyPath), VocabDb.ApprovedSha256(db));
+		Assert.Equal("ok", new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, TextWriter.Null).Run(db, ReviewStep.Mode.Summary, new StepReport("review")));
+	}
+
+	[Fact]
+	public async Task Translations_come_after_the_approval_and_wait_for_review_only_with_problems()
+	{
+		var (workspace, db) = AnalysedWorkspace();
+		using var _ = db;
 		var review = new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, TextWriter.Null);
 		string Review(ReviewStep.Mode mode) => review.Run(db, mode, new StepReport("review"));
 

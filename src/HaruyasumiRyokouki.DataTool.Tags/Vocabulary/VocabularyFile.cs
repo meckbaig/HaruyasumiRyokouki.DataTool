@@ -79,6 +79,9 @@ internal sealed class VocabularyFile
 
 	public void Write(string path, IEnumerable<string> problems) => YamlText.Write(path, Header, problems, this);
 
+	/// <summary>The text of the file, with the problems as comments at the top.</summary>
+	public string Render(IEnumerable<string> problems) => YamlText.Render(Header, problems, this);
+
 	public static VocabularyFile Read(string path) => YamlText.Deserializer.Deserialize<VocabularyFile>(File.ReadAllText(path)) ?? new VocabularyFile();
 }
 
@@ -125,6 +128,8 @@ internal sealed class TranslationsFile
 
 	/// <summary>The text of the file, with the problems as comments at the top.</summary>
 	public string Render(IEnumerable<string> problems) => YamlText.Render(Header, problems, this);
+
+	public static TranslationsFile Read(string path) => YamlText.Deserializer.Deserialize<TranslationsFile>(File.ReadAllText(path)) ?? new TranslationsFile();
 }
 
 /// <summary>Writing of the review files: header, problems as comments, short lists on one line.</summary>

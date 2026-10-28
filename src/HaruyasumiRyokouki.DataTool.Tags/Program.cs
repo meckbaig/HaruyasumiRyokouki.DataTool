@@ -57,18 +57,24 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 			var approve = new Option<bool>("--approve") { Description = "check the file that waits for review and approve it" };
 			var review = new Command("review",
 				"the file that waits for a person: vocabulary.yaml until it is approved, then translations.yaml if the translations have problems; exits with 2 while it waits");
+			var ui = new Option<bool>("--ui") { Description = "open the review page in the browser: edit, check and approve there" };
+			var noBrowser = new Option<bool>("--no-browser") { Description = "with --ui: only print the page's address" };
 			review.Options.Add(check);
 			review.Options.Add(approve);
+			review.Options.Add(ui);
+			review.Options.Add(noBrowser);
 			review.Validators.Add(result =>
 			{
-				if (result.GetValue(check) && result.GetValue(approve))
-					result.AddError("use either --check or --approve");
+				if (new[] { check, approve, ui }.Count(o => result.GetValue(o)) > 1)
+					result.AddError("use only one of --check, --approve and --ui");
 			});
-			review.SetAction((parse, cancellationToken) => RunStepAsync(parse, "review", (workspace, db, report) =>
-			{
-				var mode = parse.GetValue(approve) ? ReviewStep.Mode.Approve : parse.GetValue(check) ? ReviewStep.Mode.Check : ReviewStep.Mode.Summary;
-				return Task.FromResult<string?>(new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, Console.Out).Run(db, mode, report));
-			}, cancellationToken));
+			review.SetAction((parse, cancellationToken) => parse.GetValue(ui)
+				? ReviewPageAsync(parse, !parse.GetValue(noBrowser), cancellationToken)
+				: RunStepAsync(parse, "review", (workspace, db, report) =>
+				{
+					var mode = parse.GetValue(approve) ? ReviewStep.Mode.Approve : parse.GetValue(check) ? ReviewStep.Mode.Check : ReviewStep.Mode.Summary;
+					return Task.FromResult<string?>(new ReviewStep(workspace.VocabularyPath, workspace.TranslationsPath, Console.Out).Run(db, mode, report));
+				}, cancellationToken));
 			root.Subcommands.Add(review);
 
 			var translate = new Command("translate", "translate the new tags of the approved vocabulary through the site's AI and check them");
@@ -192,6 +198,22 @@ namespace HaruyasumiRyokouki.DataTool.Tags
 
 			Console.WriteLine($"{step}: " + string.Join(", ", report.Counts.Select(c => $"{c.Key} {c.Value}")));
 			return report.Finish(workspace, status);
+		}
+
+		/// <summary>The review page; the approval on the page writes the review report.</summary>
+		private static async Task<int> ReviewPageAsync(ParseResult parse, bool openBrowser, CancellationToken cancellationToken)
+		{
+			try
+			{
+				var workspace = Workspace.Open(parse.GetValue(WorkspaceOption)!);
+				using var db = WorkDb.Open(workspace);
+				return await new ReviewServer(workspace, db, Console.Out).RunAsync(openBrowser, cancellationToken);
+			}
+			catch (WorkspaceException ex)
+			{
+				Console.Error.WriteLine("error: " + ex.Message);
+				return ExitCodes.Error;
+			}
 		}
 
 		/// <summary>Opens the workspace and turns problems the user has to fix into one line and exit code 1.</summary>

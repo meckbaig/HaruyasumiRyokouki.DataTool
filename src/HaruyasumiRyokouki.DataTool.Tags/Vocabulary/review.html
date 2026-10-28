@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tag review</title>
+<style>
+	:root {
+		--bg: #f6f6f4; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #deded8;
+		--accent: #2f6fd6; --accent-text: #ffffff; --error: #c62828; --error-bg: #fdecea;
+		--warn: #8a5a00; --warn-bg: #fff4d6; --ok: #2e7d32; --ok-bg: #e8f5e9; --chip: #eef0f4;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #17181a; --card: #222326; --text: #e8e8e4; --muted: #9a9a94; --line: #34353a;
+			--accent: #6d9eff; --accent-text: #0d1424; --error: #ff8a80; --error-bg: #3a1f1f;
+			--warn: #ffd27a; --warn-bg: #3a3020; --ok: #9be29f; --ok-bg: #1f3322; --chip: #2e3036;
+		}
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+	header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 20px; display: flex; gap: 16px; align-items: center; }
+	header > div:first-child { min-width: 0; flex: 1; }
+	header h1 { font-size: 18px; margin: 0; }
+	header .path { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+	main { max-width: 1100px; margin: 0 auto; padding: 16px 20px 80px; }
+	button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+	button:hover { border-color: var(--accent); }
+	button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+	button.small { padding: 2px 8px; font-size: 13px; }
+	button:disabled { opacity: .5; cursor: default; }
+	input[type=text], input[type=search], select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+	input[type=text]:focus, input[type=search]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+	.badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+	.badge.ok { background: var(--ok-bg); color: var(--ok); }
+	.badge.wait { background: var(--warn-bg); color: var(--warn); }
+	.help { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+	.help summary { cursor: pointer; font-weight: 600; }
+	.help ol { margin: 8px 0 0; padding-left: 20px; }
+	.problems { border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+	.problems.has-errors { background: var(--error-bg); }
+	.problems.only-warnings { background: var(--warn-bg); }
+	.problems.clean { background: var(--ok-bg); color: var(--ok); }
+	.problems ul { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow: auto; }
+	.problems li { cursor: pointer; }
+	.problems li:hover { text-decoration: underline; }
+	.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+	.toolbar input[type=search] { flex: 1; min-width: 200px; }
+	.count { color: var(--muted); font-size: 13px; }
+	.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+	.card.flash { outline: 3px solid var(--accent); }
+	.card.has-error { border-left: 4px solid var(--error); }
+	.card.has-warning { border-left: 4px solid var(--warn); }
+	.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+	.row + .row { margin-top: 6px; }
+	.name { font-size: 16px; font-weight: 600; min-width: 220px; flex: 1; }
+	.label { color: var(--muted); font-size: 12px; min-width: 64px; }
+	.slug { width: 220px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+	.chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1; }
+	.chip { background: var(--chip); border-radius: 12px; padding: 1px 4px 1px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 2px; }
+	.chip button { border: 0; background: none; padding: 0 5px; color: var(--muted); font-size: 13px; }
+	.chip button:hover { color: var(--accent); }
+	.chip input { width: 160px; font-size: 13px; padding: 1px 6px; }
+	.add { width: 140px; font-size: 13px; padding: 2px 6px !important; }
+	.issue { font-size: 13px; padding: 3px 8px; border-radius: 4px; margin-top: 6px; }
+	.issue.error { background: var(--error-bg); color: var(--error); }
+	.issue.warning { background: var(--warn-bg); color: var(--warn); }
+	.photos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+	.photos img { height: 110px; border-radius: 4px; background: var(--chip); }
+	.photos .file { height: 110px; width: 110px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 4px; padding: 4px; word-break: break-all; }
+	.lang { display: grid; grid-template-columns: 40px 1fr; gap: 6px 10px; align-items: start; margin-top: 6px; }
+	.lang .code { font-weight: 600; color: var(--muted); padding-top: 6px; }
+	.lang .cell { display: flex; flex-direction: column; gap: 4px; }
+	.lang input.text { width: 100%; max-width: 420px; }
+	h2 { font-size: 16px; margin: 28px 0 10px; }
+	.dropped .card { opacity: .85; }
+	.reason { color: var(--muted); font-size: 13px; flex: 1; }
+	.done { text-align: center; padding: 60px 20px; }
+	.done h2 { font-size: 22px; }
+	.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+	<div>
+		<h1 id="title">Tag review</h1>
+		<div class="path" id="path"></div>
+	</div>
+	<span class="badge" id="status"></span>
+	<span class="count" id="saved"></span>
+	<button id="save">Save</button>
+	<button id="approve" class="primary">Approve</button>
+</header>
+<main id="main">
+	<p class="count">Loading…</p>
+</main>
+<script>
+"use strict";
+const token = "{{token}}";
+const api = (path) => path + (path.includes("?") ? "&" : "?") + "token=" + token;
+let stage = null, model = null, check = null, dirty = false, checkTimer = null, finished = false;
+const openPhotos = new Set();
+const filter = { text: "", show: "all", sort: "photos" };
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs = {}, ...children) {
+	const node = document.createElement(tag);
+	for (const [key, value] of Object.entries(attrs)) {
+		if (key === "class") node.className = value;
+		else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+		else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value === true ? "" : value);
+	}
+	for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) node.append(child);
+	return node;
+}
+
+// The same rule as the site's slugs: lowercase Latin letters, digits and single "_".
+function slugify(text) {
+	return text.toLowerCase().normalize("NFD").replace(/\p{Mn}/gu, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+async function request(path, body) {
+	const response = await fetch(api(path), body === undefined ? {} : {
+		method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+	});
+	if (!response.ok) throw new Error(path + ": HTTP " + response.status + " " + await response.text());
+	return response.json();
+}
+
+function body() {
+	return stage === "translations" ? { translations: model.translations } : { tags: model.tags, dropped: model.dropped };
+}
+
+function changed(structural = false) {
+	dirty = true;
+	$("saved").textContent = "Unsaved changes";
+	if (structural) render();
+	clearTimeout(checkTimer);
+	checkTimer = setTimeout(runCheck, 500);
+}
+
+async function runCheck() {
+	try {
+		check = await request("/api/check", body());
+		showCheck();
+	} catch (error) { $("saved").textContent = String(error); }
+}
+
+async function load() {
+	const state = await request("/api/state");
+	stage = state.stage;
+	model = state.stage === "translations" ? { translations: state.translations } : { tags: state.tags, dropped: state.dropped };
+	check = state.check;
+	// Of hundreds of translated tags only the ones with problems need work.
+	if (stage === "translations" && check.issues.length > 0) filter.show = "problems";
+	$("title").textContent = stage === "translations" ? "Translations of the new tags" : "Tag list";
+	$("path").textContent = state.path;
+	setStatus(state.approved);
+	render();
+}
+
+function setStatus(approved) {
+	$("status").textContent = approved ? "approved" : "waits for your approval";
+	$("status").className = "badge " + (approved ? "ok" : "wait");
+}
+
+// ---------- rendering ----------
+
+function render() {
+	const main = $("main");
+	const scroll = window.scrollY;
+	main.replaceChildren(help(), el("div", { id: "problems" }), toolbar(), el("div", { id: "list" }));
+	if (stage === "vocabulary") main.append(el("div", { class: "dropped", id: "dropped" }));
+	renderList();
+	showCheck();
+	window.scrollTo(0, scroll);
+}
+
+function help() {
+	const steps = stage === "translations" ? [
+		"These are the new tags of your approved list, translated by the site's AI. The checks found problems in them: they are listed below and marked on the tags.",
+		"Fix them: give each tag its own name in every language. A name written the same in two languages is not accepted by the site; two tags with the same name look like one tag to visitors.",
+		"The English, Russian and Japanese names are what visitors see; the small fields below them are other words people may search for.",
+		"Tags are not added or deleted here; that is done in the tag list.",
+		"Press Approve. Then run haru-data run in the terminal; it puts the tags on the site."
+	] : [
+		"Every card is a tag that will be put on the site, made from the tags the vision model gave the photos. Press Photos on a card to see which photos get it.",
+		"Fix what you do not like: rename a tag (the English name is what visitors see), delete a tag that is useless, or bring back a tag the model threw away (at the bottom).",
+		"\"Machine tags\" are what the model wrote on the photos; a photo gets the tag if it has any of them. Move one to another tag with →, or remove it with ×.",
+		"Tags marked \"on the site\" exist already and are not created again.",
+		"Red problems must be fixed, yellow ones are only hints. Then press Approve and run haru-data run in the terminal: the new tags are translated next."
+	];
+	return el("details", { class: "help", open: true },
+		el("summary", {}, "What to do here"),
+		el("ol", {}, steps.map(s => el("li", {}, s))));
+}
+
+function toolbar() {
+	const search = el("input", { type: "search", placeholder: "Find a tag…", value: filter.text,
+		oninput: e => { filter.text = e.target.value; renderList(); } });
+	const show = el("select", { onchange: e => { filter.show = e.target.value; renderList(); } },
+		[["all", "All tags"], ["problems", "With problems"], ...(stage === "vocabulary" ? [["new", "New tags"], ["existing", "On the site"]] : [])]
+			.map(([value, text]) => el("option", { value, selected: filter.show === value }, text)));
+	const sort = stage === "vocabulary" ? el("select", { onchange: e => { filter.sort = e.target.value; renderList(); } },
+		[["photos", "Most photos first"], ["name", "A to Z"]].map(([value, text]) => el("option", { value, selected: filter.sort === value }, text))) : null;
+	return el("div", { class: "toolbar" }, search, show, sort, el("span", { class: "count", id: "count" }));
+}
+
+function issuesOf(index) { return (check?.issues ?? []).filter(i => i.tag === index); }
+
+function visible(item, index) {
+	const text = filter.text.trim().toLowerCase();
+	if (text) {
+		const haystack = stage === "translations"
+			? [item.slug, item.en, item.ru, item.ja, ...Object.values(item.aliases ?? {}).flat()]
+			: [item.slug, item.en, ...(item.aliases ?? []), ...(item.sources ?? [])];
+		if (!haystack.some(s => (s ?? "").toLowerCase().includes(text))) return false;
+	}
+	if (filter.show === "problems") return issuesOf(index).length > 0;
+	if (filter.show === "new") return !item.existing;
+	if (filter.show === "existing") return !!item.existing;
+	return true;
+}
+
+function renderList() {
+	const list = $("list");
+	const items = stage === "translations" ? model.translations : model.tags;
+	let order = items.map((item, index) => index).filter(index => visible(items[index], index));
+	if (stage === "vocabulary") {
+		const photos = (i) => check?.photos?.[i] ?? model.tags[i].photos;
+		order.sort(filter.sort === "name" ? (a, b) => items[a].en.localeCompare(items[b].en) : (a, b) => photos(b) - photos(a));
+	}
+	list.replaceChildren(...order.map(index => stage === "translations" ? translationCard(index) : tagCard(index)));
+	$("count").textContent = `${order.length} of ${items.length} tags`;
+	if (stage === "vocabulary") renderDropped();
+	showCheck();
+}
+
+function chips(values, onRemove, extra) {
+	return values.map((value, i) => el("span", { class: "chip" }, value, extra ? extra(value, i) : null,
+		el("button", { title: "Remove", onclick: () => onRemove(i) }, "×")));
+}
+
+function addInput(placeholder, onAdd) {
+	return el("input", { type: "text", class: "add", placeholder, onkeydown: e => {
+		if (e.key !== "Enter") return;
+		const value = e.target.value.trim();
+		if (value) onAdd(value);
+	} });
+}
+
+function tagCard(index) {
+	const tag = model.tags[index];
+	tag.aliases ??= []; tag.sources ??= [];
+	const card = el("div", { class: "card", id: "tag-" + index });
+	const autoSlug = () => tag.slug === slugify(tag.en);
+
+	const name = el("input", { type: "text", class: "name", value: tag.en, title: "English name visitors see",
+		oninput: e => { const auto = autoSlug(); tag.en = e.target.value; if (auto && !tag.existing) { tag.slug = slugify(tag.en); slug.value = tag.slug; } changed(); } });
+	const slug = el("input", { type: "text", class: "slug", value: tag.slug, title: "The tag's id on the site",
+		oninput: e => { tag.slug = e.target.value; changed(); } });
+
+	card.append(
+		el("div", { class: "row" },
+			name,
+			tag.kind && tag.kind !== "tag" ? el("span", { class: "badge", title: "A name the vision model read or recognized" }, tag.kind) : null,
+			tag.existing ? el("span", { class: "badge ok" }, "on the site") : null,
+			el("span", { class: "count", "data-photos": index }, `${check?.photos?.[index] ?? tag.photos} photos`),
+			el("button", { class: "small", onclick: () => togglePhotos(card, "tag-" + index, tag.sources) }, "Photos"),
+			el("button", { class: "small", title: "Delete the tag; it moves to the thrown-away tags at the bottom", onclick: () => deleteTag(index) }, "Delete")),
+		el("div", { class: "row" }, el("span", { class: "label" }, "id"), slug),
+		el("div", { class: "row" }, el("span", { class: "label" }, "also found by"),
+			el("div", { class: "chips" },
+				chips(tag.aliases, i => { tag.aliases.splice(i, 1); changed(true); }),
+				addInput("+ add a word", v => { tag.aliases.push(v); changed(true); }))),
+		el("div", { class: "row" }, el("span", { class: "label" }, "machine tags"),
+			el("div", { class: "chips" },
+				chips(tag.sources, i => { tag.sources.splice(i, 1); changed(true); }, (source) => moveButton(index, source)))),
+		el("div", { class: "issues" }),
+		el("div", { class: "photos" }));
+	if (openPhotos.has("tag-" + index)) loadPhotos(card, tag.sources);
+	return card;
+}
+
+function moveButton(index, source) {
+	return el("button", { title: "Move to another tag", onclick: e => {
+		const chip = e.target.closest(".chip");
+		const input = el("input", { type: "text", list: "tag-names", placeholder: "move to tag…" });
+		const move = () => {
+			const target = model.tags.findIndex(t => t.en === input.value.trim() || t.slug === input.value.trim());
+			if (target < 0 || target === index) { input.style.outlineColor = "var(--error)"; return; }
+			model.tags[index].sources = model.tags[index].sources.filter(s => s !== source);
+			model.tags[target].sources.push(source);
+			changed(true);
+		};
+		input.addEventListener("keydown", ev => { if (ev.key === "Enter") move(); if (ev.key === "Escape") render(); });
+		input.addEventListener("change", move);
+		chip.replaceChildren(source + " →", input);
+		ensureNames();
+		input.focus();
+	} }, "→");
+}
+
+function ensureNames() {
+	let list = $("tag-names");
+	if (!list) { list = el("datalist", { id: "tag-names" }); document.body.append(list); }
+	list.replaceChildren(...model.tags.map(t => el("option", { value: t.en })));
+}
+
+function deleteTag(index) {
+	const tag = model.tags.splice(index, 1)[0];
+	model.dropped.unshift({ tag: tag.en, reason: "deleted in the review", sources: tag.sources, photos: tag.photos });
+	openPhotos.clear();
+	changed(true);
+}
+
+function renderDropped() {
+	const box = $("dropped");
+	box.replaceChildren(
+		el("h2", {}, `Thrown away (${model.dropped.length})`),
+		el("p", { class: "count" }, "Tags the model thought nobody would search for, and the tags you deleted. Bring one back if it is useful."),
+		...model.dropped.map((item, index) => {
+			const card = el("div", { class: "card" });
+			card.append(
+				el("div", { class: "row" },
+					el("strong", {}, item.tag),
+					el("span", { class: "reason" }, item.reason ?? ""),
+					el("span", { class: "count" }, `${check?.droppedPhotos?.[index] ?? item.photos} photos`),
+					el("button", { class: "small", onclick: () => togglePhotos(card, "dropped-" + index, item.sources) }, "Photos"),
+					el("button", { class: "small", onclick: () => bringBack(index) }, "Bring back")),
+				el("div", { class: "photos" }));
+			if (openPhotos.has("dropped-" + index)) loadPhotos(card, item.sources);
+			return card;
+		}));
+}
+
+function bringBack(index) {
+	const item = model.dropped.splice(index, 1)[0];
+	model.tags.unshift({ slug: slugify(item.tag), en: item.tag, aliases: [], kind: "tag", sources: item.sources ?? [], photos: item.photos, existing: false });
+	openPhotos.clear();
+	filter.text = ""; filter.show = "all";
+	changed(true);
+	window.scrollTo(0, 0);
+}
+
+function translationCard(index) {
+	const tag = model.translations[index];
+	tag.aliases ??= {};
+	const card = el("div", { class: "card", id: "tag-" + index });
+	card.append(el("div", { class: "row" }, el("strong", {}, tag.slug), el("span", { class: "count" }, "id on the site")));
+	const grid = el("div", { class: "lang" });
+	for (const [code, title] of [["en", "English"], ["ru", "Russian"], ["ja", "Japanese"]]) {
+		tag.aliases[code] ??= [];
+		grid.append(el("span", { class: "code", title }, code),
+			el("div", { class: "cell" },
+				el("input", { type: "text", class: "text", value: tag[code] ?? "", placeholder: title + " name",
+					oninput: e => { tag[code] = e.target.value; changed(); } }),
+				el("div", { class: "chips" },
+					chips(tag.aliases[code], i => { tag.aliases[code].splice(i, 1); changed(true); }),
+					addInput("+ search word", v => { tag.aliases[code].push(v); changed(true); }))));
+	}
+	card.append(grid, el("div", { class: "issues" }));
+	return card;
+}
+
+// ---------- problems ----------
+
+function showCheck() {
+	const issues = check?.issues ?? [];
+	const errors = issues.filter(i => i.isError), warnings = issues.filter(i => !i.isError);
+	const box = $("problems");
+	if (box) {
+		box.className = "problems " + (errors.length ? "has-errors" : warnings.length ? "only-warnings" : "clean");
+		box.replaceChildren(...[
+			el("strong", {}, errors.length || warnings.length
+				? `${errors.length} to fix, ${warnings.length} to look at`
+				: "No problems. Press Approve when you are done."),
+			issues.length ? el("ul", {}, issues.map(i => el("li", { onclick: () => jumpTo(i.tag) },
+				(i.isError ? "Fix: " : "Look at: ") + (i.slug ? i.slug + " — " : "") + i.message))) : null].filter(Boolean));
+	}
+	document.querySelectorAll("#list .card").forEach(card => {
+		const index = Number(card.id.slice(4));
+		const own = issuesOf(index);
+		card.classList.toggle("has-error", own.some(i => i.isError));
+		card.classList.toggle("has-warning", !own.some(i => i.isError) && own.length > 0);
+		card.querySelector(".issues").replaceChildren(...own.map(i => el("div", { class: "issue " + (i.isError ? "error" : "warning") }, i.message)));
+	});
+	document.querySelectorAll("[data-photos]").forEach(span => {
+		const index = Number(span.dataset.photos);
+		span.textContent = `${check?.photos?.[index] ?? model.tags[index].photos} photos`;
+	});
+	$("approve").disabled = finished || errors.length > 0;
+	$("approve").title = errors.length ? "Fix the red problems first" : "";
+}
+
+function jumpTo(index) {
+	if (index === null || index === undefined) return;
+	let card = $("tag-" + index);
+	if (!card) { filter.text = ""; filter.show = "all"; render(); card = $("tag-" + index); }
+	card?.scrollIntoView({ behavior: "smooth", block: "center" });
+	card?.classList.add("flash");
+	setTimeout(() => card?.classList.remove("flash"), 1500);
+}
+
+// ---------- photos ----------
+
+function togglePhotos(card, id, sources) {
+	if (openPhotos.has(id)) { openPhotos.delete(id); card.querySelector(".photos").replaceChildren(); return; }
+	openPhotos.add(id);
+	loadPhotos(card, sources);
+}
+
+async function loadPhotos(card, sources) {
+	const box = card.querySelector(".photos");
+	box.replaceChildren(el("span", { class: "count" }, "Loading photos…"));
+	const query = sources.map(s => "source=" + encodeURIComponent(s)).join("&");
+	const result = await request("/api/photos?" + query);
+	box.replaceChildren(
+		...result.files.map(f => f.shown
+			? el("img", { src: api("/api/photo/" + encodeURIComponent(f.key)), alt: f.name, title: f.name, loading: "lazy" })
+			: el("div", { class: "file", title: "The browser cannot show this format" }, f.name)),
+		result.total > result.files.length ? el("span", { class: "count" }, `and ${result.total - result.files.length} more`) : null);
+}
+
+// ---------- saving ----------
+
+$("save").addEventListener("click", async () => {
+	check = await request("/api/save", body());
+	dirty = false;
+	$("saved").textContent = "Saved";
+	setStatus(false);
+	showCheck();
+});
+
+$("approve").addEventListener("click", async () => {
+	$("approve").disabled = true;
+	const result = await request("/api/approve", body());
+	check = result.check;
+	dirty = false;
+	if (!result.ok) {
+		$("saved").textContent = result.message;
+		showCheck();
+		return;
+	}
+	finished = true;
+	setStatus(true);
+	$("saved").textContent = "";
+	$("save").disabled = true;
+	$("main").replaceChildren(el("div", { class: "done" },
+		el("h2", {}, "Approved"),
+		el("p", {}, result.message),
+		el("p", {}, "You can close this page. In the terminal, run:"),
+		el("p", {}, el("code", {}, "haru-data run")),
+		el("p", { class: "count" }, stage === "translations"
+			? "It puts the tags on the site."
+			: "It translates the new tags. If the translations have problems, it stops again: run haru-data review to fix them here.")));
+});
+
+window.addEventListener("beforeunload", e => { if (dirty && !finished) { e.preventDefault(); e.returnValue = ""; } });
+
+load().catch(error => { $("main").replaceChildren(el("p", { class: "issue error" }, String(error))); });
+</script>
+</body>
+</html>

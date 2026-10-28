@@ -118,27 +118,23 @@ What happens:
    ```
 
    Type `y` and Enter. This takes a few minutes and costs about $0.10 per 4,000 photos.
-3. The run **stops** with the message `A file waits for you`. This is not an error: the tag list is ready and waits for your check.
+3. The run **stops** with the message `Your check is needed`. This is not an error: the tag list is ready and waits for your check.
 
 ### Step 4. Check the tag list
 
-Open `vocabulary.yaml` in the workspace with any text editor. The list is in English only: the translations are made after your check, so nothing is translated that you delete. At the top are the problems the tool found; below is every tag with its English name (`en`), other English words people may search for (`aliases`) and the number of photos with it. At the end are the tags the model threw away, with the reason.
-
-Change what you do not like: rename a tag, delete a tag (its whole block), or move a thrown-away tag back up. You may also change nothing.
-
-Check the file:
-
 ```
-haru-data review --check
+haru-data review
 ```
 
-It prints the problems with line numbers. Lines starting with `error` must be fixed; `warning` lines may stay. Repeat until there are no errors, then approve the list:
+This opens a page in your browser (the terminal shows its address in case it does not open by itself; the page works only on this computer). The page explains at the top what to do. In short:
 
-```
-haru-data review --approve
-```
+- Every card is a tag that goes to the site. The list is in English only: translations are made after your check, so nothing you delete is translated.
+- Press **Photos** on a card to see the photos that get the tag. This is the quickest way to understand a tag the model made up.
+- Rename a tag in its name field, press **Delete** on a useless one, or **Bring back** a tag the model threw away (at the bottom of the page).
+- "Machine tags" on a card are what the vision model wrote on the photos; a photo gets the tag if it has any of them. **→** moves one to another tag, **×** removes it.
+- Problems appear at the top and on the cards while you edit: red ones must be fixed, yellow ones are only hints. You may also change nothing.
 
-It prints `approved N tags`. If you edit the file after that, approve it again.
+Press **Approve**. The page says `Approved`; you can close it, and the command in the terminal ends. **Save** keeps your edits without approving, so you can close the page and continue later with `haru-data review` again.
 
 ### Step 5. Second run: translations
 
@@ -149,16 +145,11 @@ haru-data run
 The same command again. The photo steps find nothing new and pass in seconds. Then the tool translates the new tags of your list into Russian and Japanese through the site's AI and checks the result: an empty translation, two tags with the same name in one language, or a text the site does not accept.
 
 - **No problems:** the translations are approved by themselves and the run goes on to step 6 without stopping.
-- **Problems found:** the run **stops** again with `A file waits for you`. Open `translations.yaml` in the workspace: the problems are at the top with line numbers, below is every new tag with its names in English, Russian and Japanese (`en`, `ru`, `ja`) and search words per language (`aliases`). Fix the problems, then, as in step 4:
+- **Problems found:** the run **stops** again and asks for your check. Run `haru-data review` once more: the same page now shows the translations, with only the tags that have problems. Fix the names in English, Russian and Japanese, press **Approve**, and run `haru-data run` again; it goes on to step 6.
 
-  ```
-  haru-data review --check
-  haru-data review --approve
-  ```
+Tags are not added or deleted in the translations; that is done in the tag list. If you change the tag list now (step 4 again), the translations are made again (from the cache, so it is quick) and checked again.
 
-  and run `haru-data run` again; it goes on to step 6.
-
-Tags are not added or deleted in `translations.yaml`; that is done in `vocabulary.yaml`. If you change `vocabulary.yaml` now, approve it again; the translations are then made again (from the cache, so it is quick) and checked again.
+Without a browser, the same works in the terminal and a text editor: the tag list is `vocabulary.yaml` and the translations are `translations.yaml` in the workspace; `haru-data review --check` prints their problems with line numbers and `haru-data review --approve` approves them.
 
 ### Step 6. Put everything on the site
 
@@ -265,13 +256,13 @@ Shows every step with its state (`done`, `to run`, `errors`, `waiting for you`, 
 haru-data review [--check | --approve]
 ```
 
-Works with the file that waits for your check: `vocabulary.yaml` (the tag list) until it is approved, then `translations.yaml` if the translations had problems. The output starts with the name of the file. Use one option or none.
+Works with what waits for your check: the tag list (`vocabulary.yaml`) until it is approved, then the translations (`translations.yaml`) if they had problems. Use one option or none.
 
 | Form | Meaning |
 |---|---|
-| `haru-data review` | Prints a summary of the file and whether it is approved. |
-| `haru-data review --check` | Checks the edited file and prints each problem with its line number. Changes nothing. |
-| `haru-data review --approve` | Checks the file and, if there are no errors, approves it: from now on it is what goes to the site. |
+| `haru-data review` | Opens the review page in the browser: the tags with their photos, the problems, editing, Save and Approve. Runs until you approve on the page or press Ctrl+C. |
+| `haru-data review --check` | In the terminal: checks the file and prints each problem with its line number. Changes nothing. |
+| `haru-data review --approve` | In the terminal: checks the file and, if there are no errors, approves it: from now on it is what goes to the site. |
 
 ### Steps
 

@@ -14,8 +14,14 @@ internal sealed class ReviewStep(string vocabularyPath, string translationsPath,
 {
 	public enum Mode { Summary, Check, Approve }
 
-	/// <summary>Returns the report status: ok, error or needs_review.</summary>
-	public string Run(SqliteConnection connection, Mode mode, StepReport report)
+	/// <summary>Which file the review works on now, and whether it is approved.</summary>
+	public sealed record State(bool Translations, bool Approved);
+
+	/// <summary>
+	/// vocabulary.yaml until its translations exist (checking or approving it again is possible
+	/// until then), translations.yaml after that.
+	/// </summary>
+	public State Current(SqliteConnection connection)
 	{
 		AnalysisData.Require(connection);
 		VocabDb.Ensure(connection);
@@ -26,19 +32,26 @@ internal sealed class ReviewStep(string vocabularyPath, string translationsPath,
 		bool vocabularyApproved = VocabDb.ApprovedSha256(connection) == vocabulary;
 		var translations = VocabDb.ReadTranslationState(connection);
 		bool translated = vocabularyApproved && translations?.VocabularySha256 == vocabulary && File.Exists(translationsPath);
+		return translated
+			? new State(true, translations!.FileSha256 == VocabDb.FileSha256(translationsPath))
+			: new State(false, vocabularyApproved);
+	}
 
-		// Checking or approving the vocabulary again is always possible until its translations exist.
-		if (!vocabularyApproved || (!translated && mode != Mode.Summary))
+	/// <summary>Returns the report status: ok, error or needs_review.</summary>
+	public string Run(SqliteConnection connection, Mode mode, StepReport report)
+	{
+		var state = Current(connection);
+		if (!state.Translations && (!state.Approved || mode != Mode.Summary))
 			return RunVocabulary(connection, mode, report);
 
-		if (!translated)
+		if (!state.Translations)
 		{
 			report.Message = "vocabulary.yaml is approved; the translate step translates the new tags next (haru-data run)";
 			output.WriteLine(report.Message);
 			return "ok";
 		}
 
-		return RunTranslations(connection, mode, report, vocabulary, translations!);
+		return RunTranslations(connection, mode, report, VocabDb.FileSha256(vocabularyPath), VocabDb.ReadTranslationState(connection)!);
 	}
 
 	private string RunVocabulary(SqliteConnection connection, Mode mode, StepReport report)

@@ -97,9 +97,8 @@ internal sealed class Runner(Workspace workspace, IStepLauncher launcher, TextWr
 
 	private static string Waiting(Step step) => step.Kind is StepKind.Review or StepKind.OnChange
 		? """
-			A file waits for you; its name is above (vocabulary.yaml or translations.yaml in the workspace).
-			Open it, read the problems at the top, edit it if needed, check it with 'haru-data review --check',
-			approve it with 'haru-data review --approve', then run 'haru-data run' again.
+			Your check is needed. Run 'haru-data review': it opens a page in the browser where you look
+			through the tags, fix what is marked and press Approve. Then run 'haru-data run' again.
 			"""
 		: step.Kind == StepKind.Cloud
 			? $"{step.Name} was not confirmed, nothing was sent. Run 'haru-data run' again to continue, with --yes where nobody can answer."

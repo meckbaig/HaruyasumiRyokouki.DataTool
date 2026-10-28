@@ -82,7 +82,7 @@ internal static class StatusView
 		{
 			null => "Everything is done. Restart the backend if push-embeddings wrote vectors since its last start.",
 			{ State: "waiting for you", Step.Kind: StepKind.Review or StepKind.OnChange }
-				=> "Next: 'haru-data review' names the file that waits; edit it, then 'haru-data review --approve' and 'haru-data run'.",
+				=> "Next: 'haru-data review' opens the review page in the browser; approve there, then 'haru-data run'.",
 			_ => $"Next: {next.Step.Name}. Run 'haru-data run'."
 		});
 		return ExitCodes.Ok;
