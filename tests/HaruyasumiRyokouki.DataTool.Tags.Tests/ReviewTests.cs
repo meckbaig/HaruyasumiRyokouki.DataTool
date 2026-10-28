@@ -139,6 +139,23 @@ public sealed class ReviewTests : IDisposable
 	}
 
 	[Fact]
+	public void A_merged_tag_brings_its_sources_and_its_names_become_search_words()
+	{
+		var bread = new VocabularyFile.Entry { Slug = "bread", En = "bread", Sources = ["bread"], Aliases = [], Photos = 3 };
+		var bun = new VocabularyFile.Entry { Slug = "bun", En = "bun", Sources = ["bun", "bread"], Aliases = ["Bread", "roll"], Photos = 2 };
+		ReviewServer.MergeTag(bun, bread);
+		Assert.Equal(["bread", "bun"], bread.Sources);
+		Assert.Equal(["bun", "roll"], bread.Aliases);   // "Bread" is its own name
+
+		var breadText = new TranslationsFile.Entry { Slug = "bread", En = "bread", Ru = "хлеб", Ja = "パン", Aliases = new() { ["ru"] = ["Булочка"] } };
+		var bunText = new TranslationsFile.Entry { Slug = "bun", En = "bun", Ru = "булочка", Ja = "パン", Aliases = new() { ["ja"] = ["ロールパン"] } };
+		ReviewServer.MergeTranslation(bunText, breadText);
+		Assert.Equal(["bun"], breadText.Aliases["en"]);
+		Assert.Equal(["Булочка"], breadText.Aliases["ru"]);   // already there, in another case
+		Assert.Equal(["ロールパン"], breadText.Aliases["ja"]);   // パン is the label
+	}
+
+	[Fact]
 	public void A_photo_taken_off_a_tag_does_not_get_it()
 	{
 		var (workspace, db) = AnalysedWorkspace();

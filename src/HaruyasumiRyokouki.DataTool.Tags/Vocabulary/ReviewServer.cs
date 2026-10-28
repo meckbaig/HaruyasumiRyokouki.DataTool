@@ -40,7 +40,14 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 	}
 
 	/// <summary>A problem for the page, linked to the tag it is about by its position.</summary>
-	public sealed record PageIssue(int? Tag, string? Slug, string Message, bool IsError);
+	/// <param name="Other">The position of the other tag of a problem between two tags (the same label), for a merge.</param>
+	public sealed record PageIssue(int? Tag, string? Slug, string Message, bool IsError, int? Other);
+
+	/// <summary>A change of the approved vocabulary made on the translations page.</summary>
+	/// <param name="Action"><c>delete</c> or <c>merge</c>.</param>
+	/// <param name="Into">For a merge, the slug of the tag that takes the other one in.</param>
+	/// <param name="Translations">The translations as edited on the page, unsaved edits included.</param>
+	public sealed record VocabularyChange(string Action, string Slug, string? Into, List<TranslationsFile.Entry> Translations);
 
 	/// <summary>Returns the exit code: 0 after an approval, 1 when stopped without one.</summary>
 	public async Task<int> RunAsync(bool openBrowser, CancellationToken cancellationToken)
@@ -76,6 +83,7 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 				approved.TrySetResult(true);
 			return (object)result;
 		}));
+		app.MapPost("/api/vocabulary", (VocabularyChange change) => Locked(() => ChangeVocabulary(change)));
 		app.MapGet("/api/photos", (HttpRequest request, int? offset) =>
 			Locked(() => Photos(request.Query["source"].Where(s => s is not null).Select(s => s!).ToList(), offset ?? 0)));
 		app.MapGet("/api/photo/{key}", (string key) => Locked(() => Photo(key)));
@@ -123,6 +131,8 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 				path = workspace.TranslationsPath,
 				state.Approved,
 				translations = file.Tags,
+				// Every tag of the approved vocabulary: merge targets, and the photos of a translated tag.
+				vocabulary = VocabDb.ReadApprovedTags(connection),
 				check = Check(new Model { Translations = file.Tags })
 			};
 		}
@@ -149,8 +159,11 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 			lines.IndexOf(int.Parse(match.Groups[2].Value)) is var index and >= 0
 				? $"{(match.Groups[1].Value == "on" ? "by" : "in the tag")} '{result.Tags[index].Labels["en"]}'"
 				: match.Value);
+		int? Other(string message) => LineReference.Match(message) is { Success: true } match
+			&& lines.IndexOf(int.Parse(match.Groups[2].Value)) is var index and >= 0 ? index : null;
+		int? Index(int line) => lines.IndexOf(line) is var index and >= 0 ? index : null;
 		var issues = result.Issues
-			.Select(i => new PageIssue(lines.IndexOf(i.Line) is var index and >= 0 ? index : null, i.Slug, Named(i.Message), i.IsError))
+			.Select(i => new PageIssue(Index(i.Line), i.Slug, Named(i.Message), i.IsError, i.Message.Contains("label") ? Other(i.Message) : null))
 			.ToList();
 
 		var keysBySource = KeysBySource();
@@ -183,6 +196,86 @@ internal sealed class ReviewServer(Workspace workspace, SqliteConnection connect
 		string status = _review.Run(connection, ReviewStep.Mode.Approve, report);
 		report.Finish(workspace, status);
 		return new ApproveResult(status == "ok", report.Message, check);
+	}
+
+	/// <summary>
+	/// Deletes a tag or merges it into another one while the translations are reviewed. The change
+	/// goes into vocabulary.yaml, which is approved again at once: it was approved, and the person
+	/// just made the change. The translations of the other tags stay as they are on the page.
+	/// </summary>
+	private object ChangeVocabulary(VocabularyChange change)
+	{
+		if (!_review.Current(connection).Translations)
+			return new { ok = false, message = "The tag list is not approved yet; change it on its page." };
+
+		var file = VocabularyFile.Read(workspace.VocabularyPath);
+		var translations = change.Translations;
+		var from = file.Tags.FirstOrDefault(t => t.Slug == change.Slug);
+		if (from is null)
+			return new { ok = false, message = $"There is no tag '{change.Slug}'." };
+		var fromTranslation = translations.FirstOrDefault(t => t.Slug == from.Slug);
+
+		string message;
+		if (change.Action == "merge")
+		{
+			var into = file.Tags.FirstOrDefault(t => t.Slug == change.Into && t != from);
+			if (into is null)
+				return new { ok = false, message = $"There is no tag '{change.Into}' to merge into." };
+			MergeTag(from, into);
+			if (fromTranslation is not null && translations.FirstOrDefault(t => t.Slug == into.Slug) is { } intoTranslation)
+				MergeTranslation(fromTranslation, intoTranslation);
+			message = $"'{from.En}' is merged into '{into.En}'.";
+		}
+		else
+		{
+			file.Dropped.Insert(0, new VocabularyFile.DroppedEntry { Tag = from.En, Reason = "deleted in the review", Sources = from.Sources, Photos = from.Photos });
+			message = $"'{from.En}' is deleted.";
+		}
+		file.Tags.Remove(from);
+		if (fromTranslation is not null)
+			translations.Remove(fromTranslation);
+
+		// The vocabulary, approved again; a new approval starts new translations, so they are saved after it.
+		var check = Save(new Model { Tags = file.Tags, Dropped = file.Dropped });
+		if (check.Issues.Any(i => i.IsError))
+			return new { ok = false, message = "The tag list has errors now; fix them on its page (haru-data review)." };
+		var report = new StepReport("review");
+		string status = _review.Run(connection, ReviewStep.Mode.Approve, report);
+		report.Finish(workspace, status);
+		if (status != "ok")
+			return new { ok = false, message = report.Message };
+
+		var (text, result) = Render(new Model { Translations = translations }, withProblems: true);
+		File.WriteAllText(workspace.TranslationsPath, text, new System.Text.UTF8Encoding(false));
+		VocabDb.SaveTranslations(connection, result.Tags, VocabDb.FileSha256(workspace.VocabularyPath), null);
+		return new { ok = true, message };
+	}
+
+	/// <summary>
+	/// The tag takes in the other one: its sources, so its photos get the tag, and its name and
+	/// aliases as search words. Photos taken off the other tag get this one: check them in its photos.
+	/// </summary>
+	internal static void MergeTag(VocabularyFile.Entry from, VocabularyFile.Entry into)
+	{
+		into.Sources = into.Sources.Concat(from.Sources).Distinct(StringComparer.Ordinal).ToList();
+		foreach (string word in from.Aliases.Prepend(from.En))
+			if (!string.Equals(word, into.En, StringComparison.OrdinalIgnoreCase) && !into.Aliases.Contains(word, StringComparer.OrdinalIgnoreCase))
+				into.Aliases.Add(word);
+		into.Photos += from.Photos;
+	}
+
+	/// <summary>The other tag's names and search words in every language become search words of this one.</summary>
+	internal static void MergeTranslation(TranslationsFile.Entry from, TranslationsFile.Entry into)
+	{
+		var labels = new[] { into.En, into.Ru, into.Ja };
+		foreach (var (language, label) in new[] { ("en", from.En), ("ru", from.Ru), ("ja", from.Ja) })
+		{
+			if (!into.Aliases.TryGetValue(language, out var list))
+				into.Aliases[language] = list = [];
+			foreach (string word in (from.Aliases.GetValueOrDefault(language) ?? []).Prepend(label).Where(w => w.Length > 0))
+				if (!labels.Contains(word, StringComparer.OrdinalIgnoreCase) && !list.Contains(word, StringComparer.OrdinalIgnoreCase))
+					list.Add(word);
+		}
 	}
 
 	/// <summary>

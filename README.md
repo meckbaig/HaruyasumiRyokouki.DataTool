@@ -131,6 +131,7 @@ This opens a page in your browser (the terminal shows its address in case it doe
 - Every card is a tag that goes to the site. The list is in English only: translations are made after your check, so nothing you delete is translated.
 - Press **Photos** on a card to see the photos that get the tag. This is the quickest way to understand a tag the model made up. A photo that got the tag by mistake: press **×** on it, and it will not get this tag (**↺** gives it back). Click a photo to see it in full size; **Show more** shows the rest.
 - Rename a tag in its name field, press **Delete** on a useless one, or **Bring back** a tag the model threw away (at the bottom of the page).
+- Two tags that are really one (`dish` and `food`): **Merge into…** on one of them and pick the other. Its photos get the other tag, and its name becomes a search word of it.
 - "Machine tags" on a card are what the vision model wrote on the photos; a photo gets the tag if it has any of them. **→** moves one to another tag, **×** removes it.
 - Problems appear at the top and on the cards while you edit: red ones must be fixed, yellow ones are only hints. You may also change nothing.
 
@@ -145,9 +146,9 @@ haru-data run
 The same command again. The photo steps find nothing new and pass in seconds. Then the tool translates the new tags of your list into Russian and Japanese through the site's AI and checks the result: an empty translation, two tags with the same name in one language, or a text the site does not accept.
 
 - **No problems:** the translations are approved by themselves and the run goes on to step 6 without stopping.
-- **Problems found:** the run **stops** again and asks for your check. Run `haru-data review` once more: the same page now shows the translations, with only the tags that have problems. Fix the names in English, Russian and Japanese, press **Approve**, and run `haru-data run` again; it goes on to step 6.
+- **Problems found:** the run **stops** again and asks for your check. Run `haru-data review` once more: the same page now shows the translations, with only the tags that have problems. Fix the names in English, Russian and Japanese. Two tags with the same name (like `bun` and `bread`, both パン) can be merged right there: **Merge into…** on the card, or the merge button on the problem. A tag you do not want after all: **Delete**. **Photos** shows the photos of a tag. Press **Approve**, and run `haru-data run` again; it goes on to step 6.
 
-Tags are not added or deleted in the translations; that is done in the tag list. If you change the tag list now (step 4 again), the translations are made again (from the cache, so it is quick) and checked again.
+A merge or a deletion on the translations page changes the approved tag list and approves it again; the translations of the other tags stay as they are. Other changes of the tag list (renaming, bringing a tag back) are made on its page: edit `vocabulary.yaml` or approve it again, and the translations are made again (from the cache, so it is quick) and checked again.
 
 Without a browser, the same works in the terminal and a text editor: the tag list is `vocabulary.yaml` and the translations are `translations.yaml` in the workspace; `haru-data review --check` prints their problems with line numbers and `haru-data review --approve` approves them.
 

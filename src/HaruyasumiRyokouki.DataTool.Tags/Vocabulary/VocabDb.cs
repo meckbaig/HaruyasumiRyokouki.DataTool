@@ -303,6 +303,37 @@ internal static class VocabDb
 		return tags.Values.ToList();
 	}
 
+	/// <summary>A tag of the approved vocabulary for the review page: names, sources and photos taken off it.</summary>
+	public sealed record ApprovedTagInfo(string Slug, string En, bool Existing, List<string> Sources, List<string> Excluded);
+
+	public static List<ApprovedTagInfo> ReadApprovedTags(SqliteConnection connection)
+	{
+		var tags = new Dictionary<string, ApprovedTagInfo>(StringComparer.Ordinal);
+		using (var command = connection.CreateCommand())
+		{
+			command.CommandText = "SELECT tag, slug, label_en, existing_id FROM vocab_tags WHERE action = 'keep' ORDER BY label_en";
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+				tags[reader.GetString(0)] = new ApprovedTagInfo(reader.GetString(1), reader.GetString(2), !reader.IsDBNull(3), [], []);
+		}
+
+		foreach (var (sql, list) in new (string, Func<ApprovedTagInfo, List<string>>)[]
+		{
+			("SELECT tag, raw_tag FROM vocab_sources ORDER BY raw_tag", t => t.Sources),
+			("SELECT tag, key FROM vocab_exclusions ORDER BY key", t => t.Excluded)
+		})
+		{
+			using var command = connection.CreateCommand();
+			command.CommandText = sql;
+			using var reader = command.ExecuteReader();
+			while (reader.Read())
+				if (tags.TryGetValue(reader.GetString(0), out var tag))
+					list(tag).Add(reader.GetString(1));
+		}
+
+		return tags.Values.ToList();
+	}
+
 	private static Dictionary<string, string> Labels(string en, string? ru, string? ja)
 	{
 		var labels = new Dictionary<string, string> { ["en"] = en };

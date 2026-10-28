@@ -155,7 +155,9 @@ async function runCheck() {
 async function load() {
 	const state = await request("/api/state");
 	stage = state.stage;
-	model = state.stage === "translations" ? { translations: state.translations } : { tags: state.tags, dropped: state.dropped };
+	model = state.stage === "translations"
+		? { translations: state.translations, vocabulary: state.vocabulary }
+		: { tags: state.tags, dropped: state.dropped };
 	check = state.check;
 	// Of hundreds of translated tags only the ones with problems need work.
 	if (stage === "translations" && check.issues.length > 0) filter.show = "problems";
@@ -187,7 +189,8 @@ function help() {
 		"These are the new tags of your approved list, translated by the site's AI. The checks found problems in them: they are listed below and marked on the tags.",
 		"Fix them: give each tag its own name in every language. A name written the same in two languages is not accepted by the site; two tags with the same name look like one tag to visitors.",
 		"The English, Russian and Japanese names are what visitors see; the small fields below them are other words people may search for.",
-		"Tags are not added or deleted here; that is done in the tag list.",
+		"Two tags that are really one (like bun and bread): press Merge into on one of them, or the button on its problem. A tag you do not want after all: Delete. Both change the approved tag list; the other translations stay.",
+		"Photos shows the photos of a tag.",
 		"Press Approve. Then run haru-data run in the terminal; it puts the tags on the site."
 	] : [
 		"Every card is a tag that will be put on the site, made from the tags the vision model gave the photos. Press Photos on a card to see which photos get it.",
@@ -274,6 +277,8 @@ function tagCard(index) {
 			tag.existing ? el("span", { class: "badge ok" }, "on the site") : null,
 			el("span", { class: "count", "data-photos": index }, `${check?.photos?.[index] ?? tag.photos} photos`),
 			el("button", { class: "small", title: "Show the photos that get this tag; × on a photo takes the tag off it", onclick: () => togglePhotos(card, "tag-" + index, tag.sources, tag) }, "Photos"),
+			el("button", { class: "small", title: "Put this tag into another one: its photos get that tag, its name becomes a search word there",
+				onclick: e => pickTag(e.target, "merge into tag…", target => mergeTag(index, target)) }, "Merge into…"),
 			el("button", { class: "small", title: "Delete the tag; it moves to the thrown-away tags at the bottom", onclick: () => deleteTag(index) }, "Delete")),
 		el("div", { class: "row" }, el("span", { class: "label" }, "id"), slug),
 		el("div", { class: "row" }, el("span", { class: "label" }, "also found by"),
@@ -308,10 +313,44 @@ function moveButton(index, source) {
 	} }, "→");
 }
 
+function allTags() { return stage === "translations" ? model.vocabulary : model.tags; }
+
 function ensureNames() {
 	let list = $("tag-names");
 	if (!list) { list = el("datalist", { id: "tag-names" }); document.body.append(list); }
-	list.replaceChildren(...model.tags.map(t => el("option", { value: t.en })));
+	list.replaceChildren(...allTags().map(t => el("option", { value: t.en })));
+}
+
+// Turns a button into a field where a tag is typed or picked from the list; Enter takes it, Escape cancels.
+function pickTag(button, placeholder, onPick) {
+	const input = el("input", { type: "text", list: "tag-names", placeholder });
+	const pick = () => {
+		const text = input.value.trim();
+		const target = allTags().findIndex(t => t.en === text || t.slug === text);
+		if (target < 0) { input.style.outline = "2px solid var(--error)"; return; }
+		onPick(target);
+	};
+	input.addEventListener("keydown", e => { if (e.key === "Enter") pick(); if (e.key === "Escape") input.replaceWith(button); });
+	input.addEventListener("change", pick);
+	ensureNames();
+	button.replaceWith(input);
+	input.focus();
+}
+
+// The tag goes into another one: its machine tags, so its photos get the other tag, and its name
+// and search words. Photos taken off it get the other tag; look through its photos afterwards.
+function mergeTag(index, target) {
+	const from = model.tags[index], into = model.tags[target];
+	if (from === into) return;
+	if (!confirm(`Merge "${from.en}" into "${into.en}"? Its ${from.photos} photos get "${into.en}", and "${from.en}" becomes a search word of it.`)) return;
+	into.aliases ??= [];
+	into.sources = [...new Set([...into.sources, ...from.sources])];
+	for (const word of [from.en, ...(from.aliases ?? [])])
+		if (word.toLowerCase() !== into.en.toLowerCase() && !into.aliases.some(a => a.toLowerCase() === word.toLowerCase()))
+			into.aliases.push(word);
+	model.tags.splice(index, 1);
+	openPhotos.clear();
+	changed(true);
 }
 
 function deleteTag(index) {
@@ -354,7 +393,14 @@ function translationCard(index) {
 	const tag = model.translations[index];
 	tag.aliases ??= {};
 	const card = el("div", { class: "card", id: "tag-" + index });
-	card.append(el("div", { class: "row" }, el("strong", {}, tag.slug), el("span", { class: "count" }, "id on the site")));
+	const info = model.vocabulary.find(t => t.slug === tag.slug);
+	card.append(el("div", { class: "row" },
+		el("strong", {}, tag.slug), el("span", { class: "count" }, "id on the site"),
+		el("span", { style: "flex: 1" }),
+		info ? el("button", { class: "small", onclick: () => togglePhotos(card, "tag-" + index, info.sources, { excluded: info.excluded, readOnly: true }) }, "Photos") : null,
+		el("button", { class: "small", title: "Put this tag into another one: its photos get that tag, its names become search words there",
+			onclick: e => pickTag(e.target, "merge into tag…", target => changeVocabulary("merge", tag.slug, model.vocabulary[target].slug)) }, "Merge into…"),
+		el("button", { class: "small", title: "Delete the tag from the list; no photo gets it", onclick: () => changeVocabulary("delete", tag.slug) }, "Delete")));
 	const grid = el("div", { class: "lang" });
 	for (const [code, title] of [["en", "English"], ["ru", "Russian"], ["ja", "Japanese"]]) {
 		tag.aliases[code] ??= [];
@@ -390,7 +436,8 @@ function showCheck() {
 		const own = issuesOf(index);
 		card.classList.toggle("has-error", own.some(i => i.isError));
 		card.classList.toggle("has-warning", !own.some(i => i.isError) && own.length > 0);
-		card.querySelector(".issues").replaceChildren(...own.map(i => el("div", { class: "issue " + (i.isError ? "error" : "warning") }, i.message)));
+		card.querySelector(".issues").replaceChildren(...own.map(i => el("div", { class: "issue " + (i.isError ? "error" : "warning") },
+			i.message, mergeButtonFor(index, i))));
 	});
 	document.querySelectorAll("[data-photos]").forEach(span => {
 		const index = Number(span.dataset.photos);
@@ -399,6 +446,37 @@ function showCheck() {
 	});
 	$("approve").disabled = finished || errors.length > 0;
 	$("approve").title = errors.length ? "Fix the red problems first" : "";
+}
+
+// "is also used by 'bread'": merging the two is often the answer.
+function mergeButtonFor(index, issue) {
+	if (issue.other === null || issue.other === undefined || issue.other === index) return null;
+	const items = stage === "translations" ? model.translations : model.tags;
+	const other = items[issue.other];
+	if (!other) return null;
+	const merge = (from, into) => stage === "translations"
+		? changeVocabulary("merge", items[from].slug, items[into].slug)
+		: mergeTag(from, into);
+	// Either one can take the other in.
+	return el("span", {},
+		el("button", { class: "small", style: "margin-left: 8px", onclick: () => merge(index, issue.other) }, `Merge into '${other.en}'`),
+		el("button", { class: "small", style: "margin-left: 6px", onclick: () => merge(issue.other, index) }, `Merge '${other.en}' into this`));
+}
+
+// On the translations page a merge or a deletion changes the approved tag list; the server does it
+// and approves the list again, keeping the translations as they are here.
+async function changeVocabulary(action, slug, into = null) {
+	const tag = model.vocabulary.find(t => t.slug === slug), target = model.vocabulary.find(t => t.slug === into);
+	const question = action === "merge"
+		? `Merge "${tag?.en ?? slug}" into "${target?.en ?? into}"? Its photos get "${target?.en ?? into}", and its names become search words of it.`
+		: `Delete "${tag?.en ?? slug}"? No photo gets this tag; it goes to the thrown-away tags of the list.`;
+	if (!confirm(question)) return;
+	const result = await request("/api/vocabulary", { action, slug, into, translations: model.translations });
+	if (!result.ok) { alert(result.message); return; }
+	dirty = false;
+	openPhotos.clear();
+	await load();
+	$("saved").textContent = result.message;
 }
 
 function jumpTo(index) {
@@ -440,6 +518,10 @@ function photoTile(file, tag) {
 				el("img", { src: url, alt: file.name, loading: "lazy" }))
 			: el("div", { class: "file", title: "The browser cannot show this format" }, file.name));
 	if (!tag) return tile;
+	if (tag.readOnly) {
+		tile.classList.toggle("excluded", (tag.excluded ?? []).includes(file.key));
+		return tile;
+	}
 
 	const excluded = () => (tag.excluded ?? []).includes(file.key);
 	const button = el("button", { class: "tile-button" });
