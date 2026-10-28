@@ -41,165 +41,269 @@ Three folders take part, and they are easy to mix up:
 | **Workspace** | The state of one trip: `haru-data.toml` (settings), `.env` (secrets), `work.sqlite` (results of every step), `vocabulary.yaml` (the vocabulary for the review), `reports/` (a report per step), `frames/` (frames of videos), `cache/llm/` (answers of the cloud model). Created by `haru-data init`; `run`, `status` and the other commands work in it. Keep it until the trip is on the site, and for adding photos later. | the argument of `init`, then `--workspace` or the current folder |
 | **Site storage** | The folder the backend imports media from: a Nextcloud folder over WebDAV or a local folder of the server. `upload` copies the files there; the site converts them and keeps them there. | `[storage]` in `haru-data.toml` |
 
+## Step-by-step guide
+
+This is the whole way from a folder of photos to photos with tags on the site. You need no knowledge of how the tool works inside.
+
+The idea in one paragraph: almost all the work is done by **one command, `haru-data run`, which you run several times**. Each time, it goes through the list of steps, skips what is done and does the rest. It stops when it needs you: to answer a question, to check the tag list it made, or when something went wrong. After you have done what it asked, you run `haru-data run` again, and it continues from where it stopped. Nothing is done twice.
+
+### Before you start
+
+Once per computer:
+
+1. Install what the tool needs and build it, see [Requirements](#requirements) and [Installation](#installation).
+
+Once per trip:
+
+2. **Collect the photos and videos** of the trip into one folder on your computer, for example `D:/Photos/Japan`. Subfolders are fine. Keep the file names as the phone or camera wrote them (the site takes the date of a photo from its name), and copy them in a way that keeps the file dates.
+3. **Make sure the site knows the dates of the trip**: the backend setting `MediaFormat:TravelDateOffsets` must cover them, otherwise the site skips the files.
+4. **Back up the site's database**, so you can go back if something goes wrong (see [Rolling back](#rolling-back)):
+
+   ```
+   pg_dump -Fc -h <host> -U <user> -d <database> -f before-import.dump
+   ```
+
+### Step 1. Create a workspace
+
+A workspace is a folder where the tool keeps everything about this trip: settings, passwords, results. It is not the photo folder and not the site's storage (see [Folders](#folders)).
+
+```
+haru-data init D:/Trips/japan --source D:/Photos/Japan
+```
+
+- `D:/Trips/japan` is the workspace to create; any new folder.
+- `--source D:/Photos/Japan` is the folder with the photos from "Before you start".
+
+The command creates the folder with two files to fill in, then checks your computer and prints a list; lines marked `MISSING` are what is not set up yet. That is expected now.
+
+### Step 2. Fill in the settings
+
+Open `haru-data.toml` in the workspace. Every line has a comment. Fill in:
+
+- `api` under `[backend]`: the address of the site's API, such as `https://api.example.com`.
+- under `[storage]`: where the site takes new media from. For Nextcloud: `type = "webdav"` and `url` = the address of the media folder. For a local folder of the server: `type = "local"` and `path` = that folder.
+
+Open `.env` in the workspace and fill in the passwords:
+
+| Line | What to put there |
+|---|---|
+| `DEEPSEEK_API_KEY` | the DeepSeek API key, for building the tag list |
+| `HARU_USER`, `HARU_PASSWORD` | the site's admin login and password |
+| `HARU_STORAGE_USER`, `HARU_STORAGE_PASSWORD` | the Nextcloud login and password (only for `webdav`) |
+| `HARU_CONNECTION` | the connection to the site's database, like `Host=db.example.com;Port=5432;Database=haru;Username=haru;Password=...` |
+
+Start LM Studio, load the model `qwen3-vl-8b-instruct` and start its server (the "Developer" tab). Then go into the workspace and check everything:
+
+```
+cd D:/Trips/japan
+haru-data doctor
+```
+
+Fix every line marked `MISSING` and run `haru-data doctor` again until it says `Everything is in place.` All the following commands are run in this folder.
+
+### Step 3. First run: analyse the photos and build the tag list
+
+```
+haru-data run
+```
+
+What happens:
+
+1. The tool looks at every photo and video on your computer. This is the long part: about 2 hours per 4,000 photos. The screen shows the progress (`tag 120/4200`). The computer must stay on; if you interrupt it with Ctrl+C or it is closed, just run `haru-data run` again later, finished photos are not done again.
+2. Then it is going to ask the cloud model (DeepSeek) to turn the tags of all photos into one tag list. This costs money, so it first prints how much it will send and asks:
+
+   ```
+   Run vocab and send these requests?
+   Continue? [y/N]
+   ```
+
+   Type `y` and Enter. This takes a few minutes and costs about $0.10 per 4,000 photos.
+3. The run **stops** with the message `The vocabulary waits for you.` This is not an error: the tag list is ready and waits for your check.
+
+### Step 4. Check the tag list
+
+Open `vocabulary.yaml` in the workspace with any text editor. At the top are the problems the tool found; below is every tag with its name in English (`en`), Russian (`ru`) and Japanese (`ja`), other words people may search for (`aliases`) and the number of photos with it. At the end are the tags the model threw away, with the reason.
+
+Change what you do not like: fix a translation, delete a tag (its whole block), or move a thrown-away tag back up. You may also change nothing.
+
+Check the file:
+
+```
+haru-data review --check
+```
+
+It prints the problems with line numbers. Lines starting with `error` must be fixed; `warning` lines may stay. Repeat until there are no errors, then approve the list:
+
+```
+haru-data review --approve
+```
+
+It prints `approved N tags`. If you edit the file after that, approve it again.
+
+### Step 5. Second run: put everything on the site
+
+```
+haru-data run
+```
+
+The same command again. The photo steps find nothing new and pass in seconds. Then the tool writes to the site in five steps. **Before each step it prints where it is going to write and asks**:
+
+```
+Create 223 tags on the site:
+  API: https://api.example.com
+Continue? [y/N]
+```
+
+Check that the address is your site and type `y`. The steps are:
+
+1. creating the new tags on the site;
+2. copying the photos and videos into the site's storage;
+3. the site imports the new files: converts photos, makes video previews. This takes long, about 3 seconds per file, so a few hours for thousands of files. Wait;
+4. putting the tags on the photos;
+5. saving the data for "similar photos" into the site's database.
+
+At the end it prints `All steps are done.`
+
+### Step 6. Restart the backend
+
+Restart the site's backend so it loads the new data for "similar photos".
+
+### Step 7. Approve the photos on the site
+
+The new photos are visible only to the admin until they are approved. Open the admin panel, look through them, fix tags where the model was wrong, and approve them. Done.
+
+### If something goes wrong
+
+When a step fails, `haru-data run` stops with a message like `upload failed: see the messages above and reports/upload.json`. Read the message above it, fix the cause (often a wrong address or password in the settings, or a server that is not running) and run `haru-data run` again; it continues from the failed step.
+
+At any moment, `haru-data status` shows which steps are done, which are not, what went wrong and what to run next.
+
+If you answered `n` to a question, nothing was written; run `haru-data run` again to be asked again.
+
+### Adding photos later
+
+Add the new photos to the same photo folder and run `haru-data run` in the same workspace. Only the new photos are analysed. If they bring tags the list does not have yet, the run stops for the check again (step 4); then run `haru-data run` once more. Only the new files are uploaded.
+
 ## Commands
 
-`haru-data` is the command for everyday use. Every command works in a workspace: the current folder, or the one given with `--workspace <folder>`. Exit codes: `0` done, `1` error, `2` waits for a person (the review, a declined question).
+`haru-data` has five commands. Every command works in a workspace: the current folder, or the folder given with `--workspace <folder>`, which every command accepts. The exit code tells scripts what happened: `0` done, `1` error, `2` waits for a person (the vocabulary check, a question answered "no").
 
-| Command | What it does |
+In the syntax below, `[...]` is optional and `<...>` is a value you put in.
+
+### haru-data init
+
+```
+haru-data init <folder> --source <folder>
+```
+
+Creates a new workspace and checks the computer (the same as `doctor`).
+
+| Part | Meaning |
 |---|---|
-| `haru-data init <folder> --source <folder>` | Creates a workspace in `<folder>` (the folder is created if needed) with `haru-data.toml`, `.env` and `work.sqlite`. `--source` is the folder with the photos and videos of the trip, written into the settings. Then runs `doctor`. Refuses a folder that is a workspace already. |
-| `haru-data doctor` | Checks what the steps need: uv, ffmpeg, the analysis packages and the SigLIP model, the source folder, the vision model server, the API key of the cloud model, the site's API, the storage settings and whether the secrets are set (their values are never printed). Changes nothing. |
-| `haru-data run` | Runs the steps that are not done, in their order (see [the steps](#steps)), and stops at the vocabulary review, at a question answered "no" and at an error. Running it again continues where it stopped. |
-| `haru-data run <step>` | Runs one step, even if it is done, for example `haru-data run sync`. |
-| `haru-data run --yes` | Answers "yes" for the steps: before the paid vocabulary step and before every write to the site. What would be asked is still printed. Needed where nobody can answer, such as a scheduled run. |
-| `haru-data run --no-review` | Approves `vocabulary.yaml` as the model wrote it instead of stopping for the review. |
-| `haru-data status` | Shows every step with its state (`done`, `to run`, `errors`, `waiting for you`, `not run`) and its counts, the errors of the step that failed and the command to run next. Changes nothing. |
-| `haru-data review` | A summary of the vocabulary: tags, new and existing, files left without a tag, the most used tags, and whether it is approved. |
-| `haru-data review --check` | Checks the edited `vocabulary.yaml` and prints every problem with its line number. Changes nothing. |
-| `haru-data review --approve` | Checks `vocabulary.yaml` and, if there are no errors, makes it the vocabulary that is written to the site. |
+| `<folder>` | The workspace to create, such as `D:/Trips/japan`. It is created if it does not exist; a folder that is a workspace already is refused. |
+| `--source <folder>` | Required. The folder with the photos and videos of the trip. It is written into `haru-data.toml` and can be changed there. |
 
-### Steps
-
-`run` runs these steps in this order. Each is a command of one of the two apps; they can also be started directly (below).
-
-| Step | App | What it does | When `run` starts it |
-|---|---|---|---|
-| `scan` | analysis | Finds the photos and videos of the source folder, checks that names are unique | every time |
-| `frames` | analysis | Takes the frame at 1 second of every video (ffmpeg) | every time; skips videos that are done |
-| `tag` | analysis | Asks the vision model for tags and names of every photo and frame | every time; skips files that are done, needs the model server only for new files |
-| `embed` | analysis | Computes SigLIP image vectors | every time; skips files that are done |
-| `vocab` | tags | Builds the vocabulary from the machine tags with the cloud model, translations through the site's AI, writes `vocabulary.yaml` | when the machine tags changed; prints an estimate and asks first |
-| `review` | tags | Stops until `vocabulary.yaml` is approved | every time |
-| `push-tags` | tags | Creates the tags the site does not have | when the approved vocabulary changed; asks first |
-| `upload` | tags | Copies the files the storage does not have into the site storage | when files were added; asks first |
-| `sync` | tags | Lets the site import the new files of its storage, reads their ids | when files were added; asks first |
-| `assign` | tags | Adds the tags to the files on the site; never removes a tag | when the vocabulary or the files on the site changed; asks first |
-| `push-embeddings` | tags | Writes the image vectors of files that have none yet into the site's database | when the vectors or the files on the site changed; asks first |
-
-### Running a step directly
-
-For repeating or debugging one step with options `run` does not pass. The workspace is required here:
-
-```
-uv-local run --project src/analysis haru-analysis <step> --workspace my-trip
-haru-tags <step> --workspace my-trip
-```
-
-`haru-tags` lies next to `haru-data`. `uv-local` is `uv-local.cmd` (Windows) or `./uv-local.sh` in the repository root: uv with its downloads kept in `.cache/`.
-
-| Command | What it does |
-|---|---|
-| `haru-analysis status` | Files per step: done, to do, with errors, and the errors. |
-| `haru-analysis tag --reset` | Deletes all machine tags and asks the model again, for example after changing the model. |
-| `haru-analysis tag --vocabulary-hint <file>` | Gives the model a text file with tags, one per line, to prefer. |
-| `haru-analysis embed --reset` | Deletes all vectors and computes them again. |
-| `haru-tags status` | What the analysis found: files, tagged files, files with vectors, distinct tags and names. |
-| `haru-tags vocab --estimate` | Prints how many requests and tokens `vocab` would send; sends nothing. |
-| `haru-tags push-embeddings --dry-run` | Matches the vectors with the files on the site and reports; writes nothing. |
-| `haru-tags push-embeddings --replace` | Also overwrites the vectors the site has already; by default they are kept. |
-
-The steps of `haru-tags` that write to the site take `--yes`, like `run`.
-
-## Filling the site with a trip
-
-The steps below are the whole cycle, including what only a person can do. `haru-data run` does the analysis, the vocabulary and the writes by itself and stops where a person is needed. It can be stopped with Ctrl+C at any moment and started again: finished work is kept.
-
-### 1. Collect the photos and videos
-
-Put all photos and videos of the trip into one folder; subfolders are fine.
-
-- **Formats.** Photos: `.jpg .jpeg .png .bmp .webp .tif .tiff .heic .heif .avif`; videos: `.mp4 .mov .avi .mkv .wmv .flv .webm .m4v .3gp .mpeg .mpg`. Other files are ignored.
-- **Unique names.** The site keeps a photo under its name with another extension (`.webp`), and its storage is one flat folder, so a file is identified by its name without the extension, ignoring case. Two files whose names differ only by extension or case, or that have the same name in different subfolders, stop the first step with a list; rename one of them.
-- **Dates.** The site takes the time of shooting from the file name (`20260301_120000.jpg`, `PXL_20260301_120000123.jpg` and the like), otherwise from the modification time of the file. Keep the names as the phone or camera wrote them, and copy the files in a way that keeps the modification time. The site skips a file whose time falls outside the trip dates.
-- **Already uploaded files.** The folder may contain files that are on the site already. Such a file is not uploaded again and keeps its vector, but it is analysed and gets the tags of the new vocabulary added to the ones it has.
-
-### 2. Prepare the site
-
-- The trip dates in the backend settings (`MediaFormat:TravelDateOffsets`) must cover all files; see `docs/features/dates.md` of the backend.
-- **Back up the database** before the first write. It is the simple way back if something goes wrong (see [Rolling back](#rolling-back)):
-
-  ```
-  pg_dump -Fc -h <host> -U <user> -d <database> -f before-import.dump
-  ```
-
-### 3. Create a workspace
-
-```
-haru-data init my-trip --source D:/Photos/Japan
-cd my-trip
-```
-
-`my-trip` is the new workspace and `--source` the folder with the photos and videos from step 1 (see [Folders](#folders)). The workspace can be anywhere, also outside the repository. Fill in `haru-data.toml`, where every setting has a comment: the address of the site's API in `[backend]`, the storage in `[storage]` (`webdav` with the URL of the media folder, or `local` with the folder of the backend's local storage), and the models if the defaults do not fit. Put the secrets into `.env` next to it: `DEEPSEEK_API_KEY`, `HARU_USER` and `HARU_PASSWORD` of the site's admin, `HARU_STORAGE_USER` and `HARU_STORAGE_PASSWORD` for WebDAV, `HARU_CONNECTION` for Postgres. There are no default addresses: until an address is set, nothing is written anywhere.
-
-Start LM Studio, load the vision model, start its server, then check:
+### haru-data doctor
 
 ```
 haru-data doctor
 ```
 
-### 4. Analyse and build the vocabulary
+Checks that everything the steps need is there and prints `ok` or `MISSING` for each: uv, ffmpeg, the photo folder, the vision model server, the API key, the site's API, the storage settings, the passwords (only whether they are set, never their values). Changes nothing.
+
+### haru-data run
 
 ```
-haru-data run
+haru-data run [<step>] [--yes] [--no-review]
 ```
 
-The analysis runs locally: the index of the folder (`scan`), a frame of every video (`frames`), tags from the vision model (`tag`, about 2 hours per 4,200 photos with the default model) and image vectors (`embed`, which downloads the SigLIP model on its first run). Files that are done are skipped on every later run.
+Without `<step>`: does all steps that are not done, in their order, and stops where a person is needed or at an error. Running it again continues from there. With `<step>`: does only that one step, even if it is done.
 
-Then `run` prints what the vocabulary step will send to the cloud model (requests, tokens, number of translations) and asks. The step takes a few minutes and costs about $0.10 for 4,200 photos with DeepSeek; the translations go through the site's own AI. The answers are kept in `cache/llm` of the workspace, so running it again does not pay twice.
+| Part | Meaning |
+|---|---|
+| `<step>` | Optional. The name of one step from [the list of steps](#steps), such as `sync`. |
+| `--yes` | Optional. Answers "yes" to every question: before the paid cloud step and before every write to the site. What would be asked is still printed. Use it only when you are sure of the settings, or where nobody can answer. |
+| `--no-review` | Optional. Approves the tag list as the model made it, instead of stopping for your check. |
 
-### 5. Review the vocabulary
-
-`run` stops at the review. Open `vocabulary.yaml` in the workspace: the problems the checks found are at the top, then every tag with its labels in English, Russian and Japanese, search aliases, the machine tags it is made of (`sources`) and the number of photos, and at the end the tags the model dropped, with the reason.
-
-Change labels and aliases, delete tags, move sources between tags or bring a dropped tag back. Then:
-
-```
-haru-data review --check     # the problems, with line numbers
-haru-data review --approve   # make it the vocabulary written to the site
-```
-
-Errors block the approval: what the site would reject, or what would break the import. The rules are in the [haru-tags README](src/HaruyasumiRyokouki.DataTool.Tags/README.md#reviewing-the-vocabulary). Editing the file after the approval takes the approval back.
-
-### 6. Write to the site
+The options can be combined with each other and with `<step>`:
 
 ```
-haru-data run
+haru-data run                      # everything that is not done, asks before writing
+haru-data run --yes                # the same without questions
+haru-data run --yes --no-review    # everything without stopping
+haru-data run sync                 # only the step sync, asks before writing
+haru-data run sync --yes           # only the step sync, without the question
 ```
 
-Five steps write to the site. Each prints where it is going to write (API, storage, database) and asks first:
+### haru-data status
 
-1. `push-tags` creates the tags the site does not have yet.
-2. `upload` copies the files the storage does not have.
-3. `sync` lets the site import the new files and reads their ids. The site converts every photo and makes previews of videos: on the test machine about 3 seconds per file, so a few hours for thousands of files; the step waits.
-4. `assign` adds the tags to the files. It only adds: tags put on a file by hand stay.
-5. `push-embeddings` writes the image vectors of the files that have none yet and lists the site's files still without one. Vectors already on the site are kept.
+```
+haru-data status
+```
 
-Every step can run again without duplicating anything. `sync` warns about files the site did not import, with the likely reason; the details are in the backend log.
+Shows every step with its state (`done`, `to run`, `errors`, `waiting for you`, `not run`) and its numbers, the errors of a failed step and the command to run next. Changes nothing.
 
-### 7. Restart the backend
+### haru-data review
 
-The similarity search loads all vectors when the backend starts, so restart it after `push-embeddings`.
+```
+haru-data review [--check | --approve]
+```
 
-### 8. Look through the new files in the admin panel
+Works with the tag list `vocabulary.yaml`. Use one option or none.
 
-Imported files are not approved: only the admin sees them until they are approved. Look through them, correct the tags where the model was wrong, and approve them.
+| Form | Meaning |
+|---|---|
+| `haru-data review` | Prints a summary of the tag list and whether it is approved. |
+| `haru-data review --check` | Checks the edited file and prints each problem with its line number. Changes nothing. |
+| `haru-data review --approve` | Checks the file and, if there are no errors, approves it: from now on it is the list that goes to the site. |
 
-### Adding photos later
+### Steps
 
-Add the files to the same source folder and run `haru-data run` in the same workspace. Only the new files are analysed. If they bring machine tags the vocabulary does not have, the vocabulary step runs again (earlier answers come from the cache) and the run stops at the review again; tags that are on the site already are matched, not created twice. Then only the new files are uploaded and tagged.
+`haru-data run` goes through these steps in this order. Normally you do not need their names; they appear on the screen while `run` works, in `status`, and are used with `haru-data run <step>`.
 
-### When something stops
+| Step | What it does | When `run` does it |
+|---|---|---|
+| `scan` | Finds the photos and videos in the photo folder, checks that names are unique | every time |
+| `frames` | Takes a picture from every video at 1 second, for the analysis | every time; skips videos that are done |
+| `tag` | Asks the vision model (LM Studio) which tags fit every photo | every time; skips photos that are done |
+| `embed` | Computes the data for "similar photos" | every time; skips photos that are done |
+| `vocab` | Makes one tag list from the tags of all photos with the cloud model, with translations; writes `vocabulary.yaml` | when the photos brought new tags; asks first, because it costs money |
+| `review` | Stops until you approve `vocabulary.yaml` | every time; passes at once when the list is approved |
+| `push-tags` | Creates the new tags on the site | when a new tag list was approved; asks first |
+| `upload` | Copies the photos and videos the site does not have into its storage | when photos were added; asks first |
+| `sync` | Lets the site import the new files | when photos were added; asks first |
+| `assign` | Puts the tags on the photos on the site; never removes a tag | when the tag list or the files on the site changed; asks first |
+| `push-embeddings` | Saves the data for "similar photos" into the site's database; keeps what is there already | when new photos have it; asks first |
 
-- `haru-data status` shows every step, the errors of the step that failed and what to run next. Each step also writes `reports/<step>.json`.
-- An error stops the run with a message and a hint. Fix the cause and run `haru-data run` again; it continues where it stopped.
-- `haru-data run <step>` runs one step again even if it is done, for example `haru-data run sync`.
-- `--yes` answers the questions of the steps (the targets are still printed); `--no-review` approves the vocabulary as the model wrote it.
+### Running a step without haru-data
+
+Each step is a command of one of two programs, which `haru-data run` starts for you. You can start them yourself to repeat or debug a step with options `run` does not have. Here `--workspace` is required:
+
+```
+uv-local run --project src/analysis haru-analysis <step> --workspace <folder>   # scan, frames, tag, embed, status
+haru-tags <step> --workspace <folder>                                           # the other steps, status
+```
+
+`haru-tags` lies next to `haru-data`. `uv-local` is `uv-local.cmd` (Windows) or `./uv-local.sh` in the repository root.
+
+| Command | What it does |
+|---|---|
+| `haru-analysis status` | Photos per step: done, to do, with errors, and the errors. |
+| `haru-analysis tag --reset` | Deletes all tags from the model and asks it again, for example after changing the model. |
+| `haru-analysis tag --vocabulary-hint <file>` | Gives the model a text file with tags, one per line, to prefer. |
+| `haru-analysis embed --reset` | Deletes the "similar photos" data and computes it again. |
+| `haru-tags status` | What the analysis found: photos, tagged photos, distinct tags. |
+| `haru-tags vocab --estimate` | Prints what `vocab` would send to the cloud model; sends nothing. |
+| `haru-tags push-embeddings --dry-run` | Reports what would be saved; saves nothing. |
+| `haru-tags push-embeddings --replace` | Also overwrites the "similar photos" data the site has already. |
+
+The `haru-tags` steps that write to the site take `--yes`, like `run`.
 
 ## Rolling back
 
 Imported files are not visible to visitors until they are approved, so a wrong import can be cleaned up before anyone sees it.
 
-**With the backup from step 2**, restore the database and delete from the storage the files uploaded since; their names start with the keys in `work.sqlite` (`SELECT key FROM media WHERE missing = 0`):
+**With the backup made before you started**, restore the database and delete from the storage the files uploaded since; their names start with the keys in `work.sqlite` (`SELECT key FROM media WHERE missing = 0`):
 
 ```
 pg_restore --clean -h <host> -U <user> -d <database> before-import.dump
